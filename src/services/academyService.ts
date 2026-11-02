@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   query,
   serverTimestamp,
@@ -11,6 +12,9 @@ import {
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
+  type DocumentSnapshot,
 } from 'firebase/firestore';
 import { NOVATEK_FLAGSHIP_CURRICULUM } from '../data/seedCurriculum';
 import {
@@ -52,13 +56,51 @@ import {
   type TherapeuticClass,
 } from '../types/models';
 
+export class RegistrationIncompleteError extends Error {
+  readonly missingFields: string[];
+
+  constructor(missingFields: string[]) {
+    super(
+      `Complete required colleague information (${missingFields.join(', ')}) before submitting an exam.`
+    );
+    this.name = 'RegistrationIncompleteError';
+    this.missingFields = missingFields;
+  }
+}
+
+async function getFreshDoc<T = DocumentData>(
+  ref: DocumentReference<T>
+): Promise<DocumentSnapshot<T>> {
+  try {
+    return await getDocFromServer(ref);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('offline') || error.message.includes('Failed to get document'))
+    ) {
+      return await getDoc(ref);
+    }
+    throw error;
+  }
+}
+
+function resolveUserEmail(explicitEmail?: string | null, user?: User | null): string {
+  const activeUser = user ?? auth.currentUser;
+  const candidate =
+    explicitEmail ||
+    activeUser?.email ||
+    activeUser?.providerData?.find((p) => Boolean(p?.email))?.email ||
+    '';
+  return candidate.trim();
+}
+
 export async function checkUserIsAdmin(user: User): Promise<boolean> {
   if (user.emailVerified && user.email === BOOTSTRAPPED_ADMIN_EMAIL) {
     return true;
   }
   const adminPath = `admins/${user.uid}`;
   try {
-    const snap = await getDoc(doc(db, 'admins', user.uid));
+    const snap = await getFreshDoc(doc(db, 'admins', user.uid));
     return snap.exists();
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, adminPath);
@@ -77,7 +119,7 @@ export async function ensureUserProfile(
   let privateInfo: PrivateUserInfo | null = null;
 
   try {
-    const pubSnap = await getDoc(pubRef);
+    const pubSnap = await getFreshDoc(pubRef);
     if (pubSnap.exists()) {
       publicProfile = pubSnap.data() as PublicProfile;
     }
@@ -86,7 +128,7 @@ export async function ensureUserProfile(
   }
 
   try {
-    const privSnap = await getDoc(privRef);
+    const privSnap = await getFreshDoc(privRef);
     if (privSnap.exists()) {
       privateInfo = privSnap.data() as PrivateUserInfo;
     }
@@ -95,6 +137,7 @@ export async function ensureUserProfile(
   }
 
   const defaultDesignation = isAdmin ? 'Regional Manager' : 'Medical Promotion Officer';
+  const resolvedAuthEmail = resolveUserEmail(user.email, user);
 
   // If the colleague entered registration fields BEFORE clicking Google Sign-In, apply them immediately
   if (pendingRegistration && isValidMobileNo(pendingRegistration.mobileNo)) {
@@ -139,7 +182,7 @@ export async function ensureUserProfile(
     );
     const safeMobile = sanitizeMobileNo(pendingRegistration.mobileNo);
     const safeEmail = clampString(
-      user.email || 'colleague@novatek.com',
+      resolvedAuthEmail || 'colleague@novatek.com',
       3,
       BLUEPRINT_LIMITS.EMAIL_MAX,
       'colleague@novatek.com'
@@ -168,7 +211,10 @@ export async function ensureUserProfile(
         } catch (error) {
           handleFirestoreError(error, OperationType.CREATE, `profiles/${user.uid}`);
         }
-      } else if (!publicProfile.isRegistrationComplete) {
+      } else if (
+        !publicProfile.isRegistrationComplete ||
+        !isColleagueRegistrationComplete(publicProfile, privateInfo)
+      ) {
         try {
           await updateDoc(pubRef, {
             displayName: safeName,
@@ -195,7 +241,7 @@ export async function ensureUserProfile(
         }
       }
 
-      if (user.email) {
+      if (resolvedAuthEmail) {
         if (!privateInfo) {
           const createdPriv: Omit<PrivateUserInfo, 'createdAt' | 'updatedAt'> = {
             uid: user.uid,
@@ -213,7 +259,11 @@ export async function ensureUserProfile(
           } catch (error) {
             handleFirestoreError(error, OperationType.CREATE, `users_private/${user.uid}`);
           }
-        } else if (!privateInfo.mobileNo) {
+        } else if (
+          !isValidMobileNo(privateInfo.mobileNo || '') ||
+          sanitizeEmployeeId(privateInfo.employeeCode || '').length <
+            BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN
+        ) {
           try {
             await updateDoc(privRef, {
               email: safeEmail,
@@ -237,7 +287,7 @@ export async function ensureUserProfile(
 
   if (!publicProfile) {
     const defaultName = clampString(
-      user.displayName || user.email?.split('@')[0] || 'Novatek Colleague',
+      user.displayName || resolvedAuthEmail.split('@')[0] || 'Novatek Colleague',
       BLUEPRINT_LIMITS.DISPLAY_NAME_MIN,
       BLUEPRINT_LIMITS.DISPLAY_NAME_MAX,
       'Novatek Colleague'
@@ -265,11 +315,11 @@ export async function ensureUserProfile(
     }
   }
 
-  if (!privateInfo && user.email) {
+  if (!privateInfo && resolvedAuthEmail) {
     const newPriv: Omit<PrivateUserInfo, 'createdAt' | 'updatedAt'> = {
       uid: user.uid,
-      email: clampString(user.email, 3, BLUEPRINT_LIMITS.EMAIL_MAX, user.email),
-      employeeCode: '',
+      email: clampString(resolvedAuthEmail, 3, BLUEPRINT_LIMITS.EMAIL_MAX, resolvedAuthEmail),
+      employeeCode: sanitizeEmployeeId(publicProfile?.employeeId || ''),
       mobileNo: '',
     };
     try {
@@ -284,11 +334,65 @@ export async function ensureUserProfile(
     }
   }
 
+  // Self-heal legacy profile/private employee ID desyncs on sign-in
+  if (publicProfile && privateInfo) {
+    const pubEmp = sanitizeEmployeeId(publicProfile.employeeId || '');
+    const privEmp = sanitizeEmployeeId(privateInfo.employeeCode || '');
+    const unifiedEmp = pubEmp || privEmp;
+
+    if (
+      unifiedEmp &&
+      isColleagueRegistrationComplete(
+        { ...publicProfile, employeeId: unifiedEmp },
+        { ...privateInfo, employeeCode: unifiedEmp }
+      )
+    ) {
+      if (!pubEmp || publicProfile.isRegistrationComplete !== true) {
+        try {
+          await updateDoc(pubRef, {
+            employeeId: unifiedEmp,
+            isRegistrationComplete: true,
+            updatedAt: serverTimestamp(),
+          });
+          publicProfile = {
+            ...publicProfile,
+            employeeId: unifiedEmp,
+            isRegistrationComplete: true,
+          };
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, `profiles/${user.uid}`);
+        }
+      }
+      if (!privEmp && resolvedAuthEmail) {
+        const safeEmail = clampString(
+          resolvedAuthEmail,
+          3,
+          BLUEPRINT_LIMITS.EMAIL_MAX,
+          resolvedAuthEmail
+        );
+        try {
+          await updateDoc(privRef, {
+            employeeCode: unifiedEmp,
+            email: safeEmail,
+            updatedAt: serverTimestamp(),
+          });
+          privateInfo = {
+            ...privateInfo,
+            employeeCode: unifiedEmp,
+            email: safeEmail,
+          };
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, `users_private/${user.uid}`);
+        }
+      }
+    }
+  }
+
   return {
     publicProfile: publicProfile!,
     privateInfo: privateInfo || {
       uid: user.uid,
-      email: user.email || '',
+      email: resolvedAuthEmail,
       employeeCode: '',
       mobileNo: '',
     },
@@ -308,7 +412,7 @@ export async function updateColleagueProfile(
 }> {
   const safeEmployeeId = sanitizeEmployeeId(input.employeeId);
   if (safeEmployeeId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN) {
-    throw new Error('Please enter a valid Employee ID (at least 2 characters).');
+    throw new Error('Please enter a valid Employee ID.');
   }
 
   if (!isValidMobileNo(input.mobileNo)) {
@@ -336,19 +440,13 @@ export async function updateColleagueProfile(
   const trimmedRegion = input.region.trim();
 
   if (territoryRequired && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
-    throw new Error('Please enter your assigned Territory (at least 2 characters).');
-  }
-  if (!territoryRequired && trimmedTerritory.length > 0 && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
-    throw new Error('Territory is optional for your designation—leave it blank or enter at least 2 characters.');
+    throw new Error('Please enter your assigned Territory.');
   }
   if (areaRequired && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
-    throw new Error('Please enter your assigned Area (at least 2 characters).');
-  }
-  if (!areaRequired && trimmedArea.length > 0 && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
-    throw new Error('Area is optional for Regional Managers—leave it blank or enter at least 2 characters.');
+    throw new Error('Please enter your assigned Area.');
   }
   if (trimmedRegion.length < BLUEPRINT_LIMITS.REGION_MIN) {
-    throw new Error('Please enter or select your assigned Region (at least 2 characters).');
+    throw new Error('Please enter or select your assigned Region.');
   }
 
   const safeTerritory = territoryRequired
@@ -367,52 +465,87 @@ export async function updateColleagueProfile(
   const pubRef = doc(db, 'profiles', uid);
   const privRef = doc(db, 'users_private', uid);
 
+  let pubExists = false;
   try {
-    await updateDoc(pubRef, {
-      displayName: safeDisplayName,
-      designation: safeDesignation,
-      employeeId: safeEmployeeId,
-      territory: safeTerritory,
-      area: safeArea,
-      region: safeRegion,
-      isRegistrationComplete: true,
-      updatedAt: serverTimestamp(),
-    });
+    const pubSnap = await getFreshDoc(pubRef);
+    pubExists = pubSnap.exists();
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `profiles/${uid}`);
+    handleFirestoreError(error, OperationType.GET, `profiles/${uid}`);
   }
 
-  if (email) {
-    const safeEmail = clampString(email, 3, BLUEPRINT_LIMITS.EMAIL_MAX, email);
-    let privExists = false;
-    try {
-      const snap = await getDoc(privRef);
-      privExists = snap.exists();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `users_private/${uid}`);
+  try {
+    if (pubExists) {
+      await updateDoc(pubRef, {
+        displayName: safeDisplayName,
+        designation: safeDesignation,
+        employeeId: safeEmployeeId,
+        territory: safeTerritory,
+        area: safeArea,
+        region: safeRegion,
+        isRegistrationComplete: true,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(pubRef, {
+        uid,
+        displayName: safeDisplayName,
+        designation: safeDesignation,
+        employeeId: safeEmployeeId,
+        territory: safeTerritory,
+        area: safeArea,
+        region: safeRegion,
+        isRegistrationComplete: true,
+        visibility: 'org',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     }
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      pubExists ? OperationType.UPDATE : OperationType.CREATE,
+      `profiles/${uid}`
+    );
+  }
 
-    try {
-      if (privExists) {
-        await updateDoc(privRef, {
-          employeeCode: safeEmployeeId,
-          mobileNo: safeMobileNo,
-          email: safeEmail,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await setDoc(privRef, {
-          uid,
-          email: safeEmail,
-          employeeCode: safeEmployeeId,
-          mobileNo: safeMobileNo,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users_private/${uid}`);
+  const resolvedEmail = resolveUserEmail(email);
+  if (!resolvedEmail) {
+    throw new Error('Your verified Google email could not be read. Please sign out and sign in again.');
+  }
+
+  const safeEmail = clampString(resolvedEmail, 3, BLUEPRINT_LIMITS.EMAIL_MAX, resolvedEmail);
+  let privExists = false;
+  try {
+    const snap = await getFreshDoc(privRef);
+    privExists = snap.exists();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `users_private/${uid}`);
+  }
+
+  try {
+    if (privExists) {
+      await updateDoc(privRef, {
+        employeeCode: safeEmployeeId,
+        mobileNo: safeMobileNo,
+        email: safeEmail,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(privRef, {
+        uid,
+        email: safeEmail,
+        employeeCode: safeEmployeeId,
+        mobileNo: safeMobileNo,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     }
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      privExists ? OperationType.UPDATE : OperationType.CREATE,
+      `users_private/${uid}`
+    );
   }
 
   return {
@@ -578,7 +711,7 @@ export async function markStudyResourceCompleted(
 
   const currentSet = new Set(existingProgress?.completedResourceIds || []);
   currentSet.add(resourceId);
-  const completedList = Array.from(currentSet).slice(0, 25);
+  const completedList = Array.from(currentSet).slice(0, 50);
 
   const allCompleted =
     allResourceIds.length > 0 && allResourceIds.every((id) => completedList.includes(id));
@@ -587,7 +720,7 @@ export async function markStudyResourceCompleted(
   if (!existingProgress) {
     let existsOnServer = false;
     try {
-      const snap = await getDoc(progressRef);
+      const snap = await getFreshDoc(progressRef);
       existsOnServer = snap.exists();
     } catch (error) {
       handleFirestoreError(error, OperationType.GET, `learning_progress/${progressId}`);
@@ -640,31 +773,247 @@ export async function submitProductExam(params: {
     durationSeconds,
   } = params;
 
-  if (!isColleagueRegistrationComplete(userProfile, privateInfo)) {
-    const missing = getMissingRegistrationFields(userProfile, privateInfo);
+  const activeUser = auth.currentUser;
+  if (!activeUser) {
+    throw new Error('Your sign-in session expired. Please sign in again to submit your exam.');
+  }
+  if (!activeUser.emailVerified) {
+    throw new Error('A verified Google email account is required to submit certification exams.');
+  }
+  if (questions.length === 0) {
+    throw new Error('This product exam does not contain any questions yet.');
+  }
+
+  const uid = activeUser.uid;
+  const pubRef = doc(db, 'profiles', uid);
+  const privRef = doc(db, 'users_private', uid);
+  const prodRef = doc(db, 'products', product.id);
+  const leaderboardId = `${uid}_${product.id}`;
+  const leaderboardRef = doc(db, 'leaderboard', leaderboardId);
+
+  // 1. Pre-flight fresh server reads so we never rely on stale cached state
+  let serverPub: PublicProfile | null = null;
+  let serverPriv: PrivateUserInfo | null = null;
+  let serverProd: ProductModule | null = null;
+  let leaderboardExists = false;
+  let existingBestPercentage = -1;
+  let existingLbSubmissionId = '';
+
+  try {
+    const snap = await getFreshDoc(pubRef);
+    if (snap.exists()) {
+      serverPub = snap.data() as PublicProfile;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `profiles/${uid}`);
+  }
+
+  try {
+    const snap = await getFreshDoc(privRef);
+    if (snap.exists()) {
+      serverPriv = snap.data() as PrivateUserInfo;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `users_private/${uid}`);
+  }
+
+  try {
+    const snap = await getFreshDoc(prodRef);
+    if (snap.exists()) {
+      serverProd = snap.data() as ProductModule;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `products/${product.id}`);
+  }
+
+  try {
+    const lbSnap = await getFreshDoc(leaderboardRef);
+    if (lbSnap.exists()) {
+      leaderboardExists = true;
+      const lbData = lbSnap.data() as { percentage?: number; submissionId?: string };
+      existingBestPercentage = lbData.percentage ?? -1;
+      existingLbSubmissionId = lbData.submissionId || '';
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `leaderboard/${leaderboardId}`);
+  }
+
+  // 2. Reconcile & self-heal profile + private info on Firestore if client has valid fields
+  const mergedEmpId = sanitizeEmployeeId(
+    serverPub?.employeeId ||
+      serverPriv?.employeeCode ||
+      userProfile.employeeId ||
+      privateInfo?.employeeCode ||
+      ''
+  );
+  const mergedMobileNo = sanitizeMobileNo(
+    (serverPriv?.mobileNo && isValidMobileNo(serverPriv.mobileNo) ? serverPriv.mobileNo : '') ||
+      privateInfo?.mobileNo ||
+      ''
+  );
+  const mergedDisplayName = clampString(
+    serverPub?.displayName || userProfile.displayName || activeUser.displayName || 'Novatek Colleague',
+    BLUEPRINT_LIMITS.DISPLAY_NAME_MIN,
+    BLUEPRINT_LIMITS.DISPLAY_NAME_MAX,
+    'Novatek Colleague'
+  );
+  const mergedDesignation = clampString(
+    normalizeDesignationLabel(serverPub?.designation || userProfile.designation) ||
+      'Medical Promotion Officer',
+    BLUEPRINT_LIMITS.DESIGNATION_MIN,
+    BLUEPRINT_LIMITS.DESIGNATION_MAX,
+    'Medical Promotion Officer'
+  );
+  const mergedTerritory = clampOptionalString(
+    serverPub?.territory || userProfile.territory || '',
+    BLUEPRINT_LIMITS.TERRITORY_MAX
+  );
+  const mergedArea = clampOptionalString(
+    serverPub?.area || userProfile.area || '',
+    BLUEPRINT_LIMITS.AREA_MAX
+  );
+  const mergedRegion = clampString(
+    serverPub?.region || userProfile.region || NOVATEK_REGIONS[0],
+    BLUEPRINT_LIMITS.REGION_MIN,
+    BLUEPRINT_LIMITS.REGION_MAX,
+    NOVATEK_REGIONS[0]
+  );
+  const resolvedEmail = resolveUserEmail(serverPriv?.email || privateInfo?.email, activeUser);
+
+  const effectiveProfile: PublicProfile = {
+    uid,
+    displayName: mergedDisplayName,
+    designation: mergedDesignation,
+    employeeId: mergedEmpId,
+    territory: mergedTerritory,
+    area: mergedArea,
+    region: mergedRegion,
+    isRegistrationComplete: true,
+    visibility: 'org',
+  };
+  const effectivePrivate: PrivateUserInfo = {
+    uid,
+    email: resolvedEmail,
+    employeeCode: mergedEmpId,
+    mobileNo: mergedMobileNo,
+  };
+
+  const missingFields = getMissingRegistrationFields(effectiveProfile, effectivePrivate);
+  if (missingFields.length > 0) {
+    throw new RegistrationIncompleteError(missingFields);
+  }
+
+  // Ensure server-side profiles/{uid} and users_private/{uid} match effective registration before batch commit
+  const serverNeedsProfileSync =
+    !serverPub ||
+    serverPub.isRegistrationComplete !== true ||
+    sanitizeEmployeeId(serverPub.employeeId || '') !== mergedEmpId ||
+    (serverPub.region || '').trim() !== mergedRegion ||
+    (serverPub.area || '').trim() !== mergedArea ||
+    (serverPub.territory || '').trim() !== mergedTerritory;
+
+  if (serverNeedsProfileSync) {
+    try {
+      if (serverPub) {
+        await updateDoc(pubRef, {
+          displayName: mergedDisplayName,
+          designation: mergedDesignation,
+          employeeId: mergedEmpId,
+          territory: mergedTerritory,
+          area: mergedArea,
+          region: mergedRegion,
+          isRegistrationComplete: true,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(pubRef, {
+          ...effectiveProfile,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(
+        error,
+        serverPub ? OperationType.UPDATE : OperationType.CREATE,
+        `profiles/${uid}`
+      );
+    }
+  }
+
+  const serverNeedsPrivateSync =
+    !serverPriv ||
+    sanitizeEmployeeId(serverPriv.employeeCode || '') !== mergedEmpId ||
+    !isValidMobileNo(serverPriv.mobileNo || '');
+
+  if (serverNeedsPrivateSync && resolvedEmail) {
+    const safeEmail = clampString(resolvedEmail, 3, BLUEPRINT_LIMITS.EMAIL_MAX, resolvedEmail);
+    try {
+      if (serverPriv) {
+        await updateDoc(privRef, {
+          employeeCode: mergedEmpId,
+          mobileNo: mergedMobileNo,
+          email: safeEmail,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(privRef, {
+          uid,
+          email: safeEmail,
+          employeeCode: mergedEmpId,
+          mobileNo: mergedMobileNo,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(
+        error,
+        serverPriv ? OperationType.UPDATE : OperationType.CREATE,
+        `users_private/${uid}`
+      );
+    }
+  }
+
+  // 3. Validate live product module availability & retake rules
+  const liveProduct = serverProd || product;
+  if (!serverProd) {
+    throw new Error('This product module is no longer available on the server.');
+  }
+  if (liveProduct.status !== 'published') {
+    const userIsAdmin = await checkUserIsAdmin(activeUser);
+    if (!userIsAdmin) {
+      throw new Error('This product module is currently unpublished and cannot accept submissions.');
+    }
+  }
+  if (liveProduct.examEnabled === false) {
     throw new Error(
-      `Complete required colleague information (${missing.join(', ')}) before submitting an exam.`
+      `The certification exam for ${liveProduct.brandName} has been paused by an Administrator.`
+    );
+  }
+  if (liveProduct.allowRetakes === false && leaderboardExists) {
+    throw new Error(
+      `Retakes are disabled for ${liveProduct.brandName}, and your official attempt has already been recorded.`
     );
   }
 
-  const submissionId = sanitizeId(`sub_${userProfile.uid.slice(0, 10)}_${Date.now()}`);
-  const leaderboardId = `${userProfile.uid}_${product.id}`;
+  const submissionId = sanitizeId(`sub_${uid.slice(0, 10)}_${Date.now()}`);
 
   let awardedScore = 0;
   let maxScore = 0;
   let hasTextQuestions = false;
 
-  const responses: ExamResponseItem[] = questions.slice(0, 25).map((q) => {
+  const responses: ExamResponseItem[] = questions.slice(0, 50).map((q) => {
     const pts = clampInt(q.points, 1, 100);
     maxScore += pts;
 
     if (q.questionType === 'mcq') {
       const selected =
-        typeof mcqSelections[q.id] === 'number' ? clampInt(mcqSelections[q.id], -1, 5) : -1;
+        typeof mcqSelections[q.id] === 'number' ? clampInt(mcqSelections[q.id], -1, 10) : -1;
       const earned = selected >= 0 && selected === q.correctOptionIndex ? pts : 0;
       awardedScore += earned;
       return {
-        questionId: q.id,
+        questionId: sanitizeId(q.id),
         questionPrompt: clampString(q.prompt, 1, BLUEPRINT_LIMITS.QUESTION_PROMPT_MAX),
         questionType: 'mcq',
         selectedOptionIndex: selected,
@@ -681,7 +1030,7 @@ export async function submitProductExam(params: {
       const rubricEarned = scoreWrittenResponseByRubric(written, q.rubricKeywords, pts);
       awardedScore += rubricEarned;
       return {
-        questionId: q.id,
+        questionId: sanitizeId(q.id),
         questionPrompt: clampString(q.prompt, 1, BLUEPRINT_LIMITS.QUESTION_PROMPT_MAX),
         questionType: 'text',
         selectedOptionIndex: -1,
@@ -695,45 +1044,27 @@ export async function submitProductExam(params: {
   const safeMaxScore = Math.max(1, maxScore);
   const safeAwardedScore = clampInt(awardedScore, 0, safeMaxScore);
   const percentage = clampInt((safeAwardedScore / safeMaxScore) * 100, 0, 100);
-  const passed = percentage >= product.passingPercentage;
+  const passed = percentage >= liveProduct.passingPercentage;
   const gradingStatus = hasTextQuestions ? 'pending_review' : 'finalized';
-  const safeDuration = clampInt(durationSeconds, 1, 14400);
-
-  const safeEmpId = sanitizeEmployeeId(userProfile.employeeId || '');
-  const safeTerritory = clampOptionalString(
-    userProfile.territory || '',
-    BLUEPRINT_LIMITS.TERRITORY_MAX
-  );
-  const safeArea = clampOptionalString(userProfile.area || '', BLUEPRINT_LIMITS.AREA_MAX);
+  const safeDuration = clampInt(durationSeconds, 0, 86400);
+  const safeAuthorId = sanitizeId(liveProduct.authorId || product.authorId || uid);
 
   const submissionPayload: Omit<ExamSubmission, 'createdAt' | 'updatedAt'> = {
     id: submissionId,
-    userId: userProfile.uid,
-    userName: clampString(
-      userProfile.displayName,
-      BLUEPRINT_LIMITS.DISPLAY_NAME_MIN,
-      BLUEPRINT_LIMITS.DISPLAY_NAME_MAX
-    ),
-    userRegion: clampString(
-      userProfile.region,
-      BLUEPRINT_LIMITS.REGION_MIN,
-      BLUEPRINT_LIMITS.REGION_MAX
-    ),
-    userDesignation: clampString(
-      userProfile.designation,
-      BLUEPRINT_LIMITS.DESIGNATION_MIN,
-      BLUEPRINT_LIMITS.DESIGNATION_MAX
-    ),
-    userEmployeeId: safeEmpId,
-    userTerritory: safeTerritory,
-    userArea: safeArea,
-    productId: product.id,
+    userId: uid,
+    userName: mergedDisplayName,
+    userRegion: mergedRegion,
+    userDesignation: mergedDesignation,
+    userEmployeeId: mergedEmpId,
+    userTerritory: mergedTerritory,
+    userArea: mergedArea,
+    productId: sanitizeId(liveProduct.id),
     productName: clampString(
-      product.brandName,
+      liveProduct.brandName,
       BLUEPRINT_LIMITS.BRAND_NAME_MIN,
       BLUEPRINT_LIMITS.BRAND_NAME_MAX
     ),
-    productAuthorId: product.authorId,
+    productAuthorId: safeAuthorId,
     responses,
     awardedScore: safeAwardedScore,
     maxScore: safeMaxScore,
@@ -746,18 +1077,16 @@ export async function submitProductExam(params: {
     visibility: 'org',
   };
 
-  const leaderboardRef = doc(db, 'leaderboard', leaderboardId);
-  let leaderboardExists = false;
-  let existingBestPercentage = -1;
-
-  try {
-    const lbSnap = await getDoc(leaderboardRef);
-    if (lbSnap.exists()) {
-      leaderboardExists = true;
-      existingBestPercentage = (lbSnap.data() as { percentage?: number }).percentage ?? -1;
+  // Check if a previously linked best submission was deleted by Admin
+  let previousBestSubmissionMissing = false;
+  if (leaderboardExists && percentage < existingBestPercentage && existingLbSubmissionId) {
+    try {
+      const prevSubSnap = await getFreshDoc(doc(db, 'exam_submissions', existingLbSubmissionId));
+      previousBestSubmissionMissing = !prevSubSnap.exists();
+    } catch {
+      // Colleague owns their own exam_submissions; if unreadable/missing, replace cleanly
+      previousBestSubmissionMissing = true;
     }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, `leaderboard/${leaderboardId}`);
   }
 
   const batch = writeBatch(db);
@@ -775,9 +1104,9 @@ export async function submitProductExam(params: {
       userName: submissionPayload.userName,
       userRegion: submissionPayload.userRegion,
       userDesignation: submissionPayload.userDesignation,
-      userEmployeeId: safeEmpId,
-      userTerritory: safeTerritory,
-      userArea: safeArea,
+      userEmployeeId: mergedEmpId,
+      userTerritory: mergedTerritory,
+      userArea: mergedArea,
       productId: submissionPayload.productId,
       productName: submissionPayload.productName,
       submissionId,
@@ -791,7 +1120,7 @@ export async function submitProductExam(params: {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-  } else if (percentage >= existingBestPercentage) {
+  } else if (percentage >= existingBestPercentage || previousBestSubmissionMissing) {
     batch.update(leaderboardRef, {
       submissionId,
       score: safeAwardedScore,
@@ -803,9 +1132,9 @@ export async function submitProductExam(params: {
       userName: submissionPayload.userName,
       userRegion: submissionPayload.userRegion,
       userDesignation: submissionPayload.userDesignation,
-      userEmployeeId: safeEmpId,
-      userTerritory: safeTerritory,
-      userArea: safeArea,
+      userEmployeeId: mergedEmpId,
+      userTerritory: mergedTerritory,
+      userArea: mergedArea,
       productName: submissionPayload.productName,
       updatedAt: serverTimestamp(),
     });
@@ -814,9 +1143,9 @@ export async function submitProductExam(params: {
       userName: submissionPayload.userName,
       userRegion: submissionPayload.userRegion,
       userDesignation: submissionPayload.userDesignation,
-      userEmployeeId: safeEmpId,
-      userTerritory: safeTerritory,
-      userArea: safeArea,
+      userEmployeeId: mergedEmpId,
+      userTerritory: mergedTerritory,
+      userArea: mergedArea,
       updatedAt: serverTimestamp(),
     });
   }
@@ -1144,8 +1473,8 @@ export async function addLearningResourceToProduct(
     clinicalTakeaway: string;
   }
 ): Promise<void> {
-  if (currentCount >= 25) {
-    throw new Error('Maximum of 25 learning resources reached for this product module.');
+  if (currentCount >= 50) {
+    throw new Error('Maximum of 50 learning resources reached for this product module.');
   }
   const resourceId = sanitizeId(`res_${Date.now()}`);
   const batch = writeBatch(db);
@@ -1180,7 +1509,7 @@ export async function addLearningResourceToProduct(
   });
 
   batch.update(doc(db, 'products', product.id), {
-    resourceCount: clampInt(currentCount + 1, 0, 25),
+    resourceCount: clampInt(currentCount + 1, 0, 50),
     updatedAt: serverTimestamp(),
   });
 
@@ -1264,7 +1593,7 @@ export async function removeLearningResource(
   const batch = writeBatch(db);
   batch.delete(doc(db, 'products', product.id, 'resources', resourceId));
   batch.update(doc(db, 'products', product.id), {
-    resourceCount: clampInt(Math.max(0, currentCount - 1), 0, 25),
+    resourceCount: clampInt(Math.max(0, currentCount - 1), 0, 50),
     updatedAt: serverTimestamp(),
   });
 
@@ -1289,8 +1618,8 @@ export async function addExamQuestionToProduct(
     modelAnswer: string;
   }
 ): Promise<void> {
-  if (currentCount >= 25) {
-    throw new Error('Maximum of 25 exam questions reached for this product module.');
+  if (currentCount >= 50) {
+    throw new Error('Maximum of 50 exam questions reached for this product module.');
   }
   const questionId = sanitizeId(`q_${Date.now()}`);
   const safeOptions =
@@ -1343,7 +1672,7 @@ export async function addExamQuestionToProduct(
   });
 
   batch.update(doc(db, 'products', product.id), {
-    questionCount: clampInt(currentCount + 1, 0, 25),
+    questionCount: clampInt(currentCount + 1, 0, 50),
     updatedAt: serverTimestamp(),
   });
 
@@ -1446,7 +1775,7 @@ export async function removeExamQuestion(
   const batch = writeBatch(db);
   batch.delete(doc(db, 'products', product.id, 'questions', questionId));
   batch.update(doc(db, 'products', product.id), {
-    questionCount: clampInt(Math.max(0, currentCount - 1), 0, 25),
+    questionCount: clampInt(Math.max(0, currentCount - 1), 0, 50),
     updatedAt: serverTimestamp(),
   });
 

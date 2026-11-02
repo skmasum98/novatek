@@ -5,8 +5,8 @@ import path from 'node:path';
 
 /**
  * Phase 0 & Phase 5 Hardened Security Rule Verification Suite
- * Evaluates the "Dirty Dozen" adversarial scenarios against the rule invariants
- * and AST patterns in firestore.rules / DRAFT_firestore.rules.
+ * Evaluates the "Dirty Dozen" adversarial scenarios and regression invariants
+ * against firestore.rules / DRAFT_firestore.rules.
  */
 
 const rulesPath = fs.existsSync(path.resolve('firestore.rules'))
@@ -27,6 +27,10 @@ const ID_REGEX = /^[a-zA-Z0-9_\-]+$/;
 
 function isValidId(id: unknown): id is string {
   return typeof id === 'string' && id.length >= 1 && id.length <= 128 && ID_REGEX.test(id);
+}
+
+function isSignedIn(auth: AuthContext | null): boolean {
+  return auth !== null;
 }
 
 function isVerifiedUser(auth: AuthContext | null): boolean {
@@ -97,10 +101,6 @@ test('Dirty Dozen #4: Cross-user PII read on /users_private/{userId} is DENIED',
   assert.match(rulesSource, /match \/users_private\/\{userId\}[\s\S]*?allow list: if false;/);
 });
 
-function isSignedIn(auth: AuthContext | null): boolean {
-  return auth !== null;
-}
-
 test('Dirty Dozen #5: Identity spoofing on /exam_submissions/{submissionId} is DENIED', () => {
   const requester: AuthContext = { uid: 'colleague_1', email: 'c1@novatek.com', emailVerified: true };
   const payloadUserId = 'colleague_2';
@@ -108,25 +108,19 @@ test('Dirty Dozen #5: Identity spoofing on /exam_submissions/{submissionId} is D
   assert.match(rulesSource, /incoming\(\)\.userId == request\.auth\.uid/);
 });
 
-test('Dirty Dozen #6: Submitting exam on paused or unpublished product module is DENIED', () => {
-  const pausedProduct: { status: string; examEnabled: boolean } = {
-    status: 'published',
-    examEnabled: false,
-  };
-  const draftProduct: { status: string; examEnabled: boolean } = {
-    status: 'draft',
-    examEnabled: true,
-  };
-  assert.equal(pausedProduct.status === 'published' && pausedProduct.examEnabled === true, false);
-  assert.equal(draftProduct.status === 'published' && draftProduct.examEnabled === true, false);
-  assert.match(
-    rulesSource,
-    /get\(\/databases\/\$\(database\)\/documents\/products\/\$\(incoming\(\)\.productId\)\)\.data\.status == 'published'/
-  );
-  assert.match(
-    rulesSource,
-    /get\(\/databases\/\$\(database\)\/documents\/products\/\$\(incoming\(\)\.productId\)\)\.data\.examEnabled == true/
-  );
+test('Dirty Dozen #6: Submitting exam on paused or unpublished product module is DENIED for non-admins', () => {
+  const colleague: AuthContext = { uid: 'colleague_1', email: 'c1@novatek.com', emailVerified: true };
+  const pausedProduct = { status: 'published', examEnabled: false };
+  const draftProduct = { status: 'draft', examEnabled: true };
+
+  const canSubmit = (prod: { status: string; examEnabled: boolean }, auth: AuthContext) =>
+    (prod.status === 'published' || isAdmin(auth)) && prod.examEnabled === true;
+
+  assert.equal(canSubmit(pausedProduct, colleague), false);
+  assert.equal(canSubmit(draftProduct, colleague), false);
+  assert.match(rulesSource, /function canSubmitExamForProduct\(productData, productId\)/);
+  assert.match(rulesSource, /productData\.status == 'published' \|\| isAdmin\(\)/);
+  assert.match(rulesSource, /productData\.examEnabled == true/);
 });
 
 test('Dirty Dozen #7: Non-atomic exam submission without leaderboard write is DENIED', () => {
@@ -184,26 +178,39 @@ function hasRequiredLocationForDesignation(data: {
   territory?: string;
   area?: string;
 }): boolean {
-  if (data.designation === 'Regional Manager') {
+  if (
+    data.designation === 'Regional Manager' ||
+    data.designation === 'Regional Sales Manager' ||
+    data.designation === 'RSM' ||
+    data.designation === 'Zonal Manager' ||
+    data.designation === 'National Sales Manager'
+  ) {
     return true;
   }
-  if (data.designation === 'Area Manager' || data.designation === 'Area Sales Manager') {
-    return typeof data.area === 'string' && data.area.length >= 2 && data.area.length <= 80;
+  if (
+    data.designation === 'Area Manager' ||
+    data.designation === 'Area Sales Manager' ||
+    data.designation === 'ASM'
+  ) {
+    return typeof data.area === 'string' && data.area.length >= 1 && data.area.length <= 80;
   }
   return (
     typeof data.territory === 'string' &&
-    data.territory.length >= 2 &&
+    data.territory.length >= 1 &&
     data.territory.length <= 80 &&
     typeof data.area === 'string' &&
-    data.area.length >= 2 &&
+    data.area.length >= 1 &&
     data.area.length <= 80
   );
 }
 
-test('Registration Gate: Role-aware Territory & Area rules (MPO vs Area Manager vs Regional Manager)', () => {
+test('Registration Gate: Role-aware Territory & Area rules and employeeId/employeeCode sync resilience', () => {
   assert.match(rulesSource, /function hasRequiredLocationForDesignation\(data\)/);
-  assert.match(rulesSource, /isCompleteColleagueProfile\(get\(\/databases\/\$\(database\)\/documents\/profiles\/\$\(request\.auth\.uid\)\)\.data\)/);
-  assert.match(rulesSource, /isCompletePrivateUserInfo\(get\(\/databases\/\$\(database\)\/documents\/users_private\/\$\(request\.auth\.uid\)\)\.data\)/);
+  assert.match(rulesSource, /function hasCompletedColleagueRegistration\(prof, priv\)/);
+  assert.match(
+    rulesSource,
+    /hasCompletedColleagueRegistration\(\s*get\(\/databases\/\$\(database\)\/documents\/profiles\/\$\(request\.auth\.uid\)\)\.data,\s*get\(\/databases\/\$\(database\)\/documents\/users_private\/\$\(request\.auth\.uid\)\)\.data\s*\)/
+  );
 
   // MPO missing territory or area -> DENIED
   assert.equal(
@@ -225,8 +232,8 @@ test('Registration Gate: Role-aware Territory & Area rules (MPO vs Area Manager 
   assert.equal(
     hasRequiredLocationForDesignation({
       designation: 'Medical Promotion Officer',
-      territory: 'Jashore Sadar',
-      area: 'Jashore Central',
+      territory: 'A',
+      area: 'B',
     }),
     true
   );
@@ -257,6 +264,13 @@ test('Registration Gate: Role-aware Territory & Area rules (MPO vs Area Manager 
       area: '',
     }),
     true
+  );
+});
+
+test('Retake Leaderboard Safety: Unchanged submissionId on lower-score retake does not fail if prior submission was pruned', () => {
+  assert.match(
+    rulesSource,
+    /incoming\(\)\.submissionId == existing\(\)\.submissionId \|\|\s*existsAfter\(\/databases\/\$\(database\)\/documents\/exam_submissions\/\$\(incoming\(\)\.submissionId\)\)/
   );
 });
 

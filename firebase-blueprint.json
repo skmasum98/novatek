@@ -22,7 +22,7 @@
         "region": {
           "type": "string",
           "description": "Assigned pharmaceutical sales region.",
-          "minLength": 2,
+          "minLength": 1,
           "maxLength": 80
         },
         "visibility": {
@@ -85,7 +85,7 @@
         "region": {
           "type": "string",
           "description": "Assigned Novatek sales region (24 official regions or custom region text).",
-          "minLength": 2,
+          "minLength": 1,
           "maxLength": 80
         },
         "isRegistrationComplete": {
@@ -562,7 +562,7 @@
         "userRegion": {
           "type": "string",
           "description": "Colleague territory or region.",
-          "minLength": 2,
+          "minLength": 1,
           "maxLength": 80
         },
         "userDesignation": {
@@ -708,7 +708,7 @@
         "userRegion": {
           "type": "string",
           "description": "Colleague territory or region.",
-          "minLength": 2,
+          "minLength": 1,
           "maxLength": 80
         },
         "userDesignation": {

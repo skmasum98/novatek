@@ -43,7 +43,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   const [displayName, setDisplayName] = useState(profile.displayName || '');
   const [employeeId, setEmployeeId] = useState(
-    profile.employeeId || (alreadyComplete ? privateInfo.employeeCode : '')
+    profile.employeeId || privateInfo.employeeCode || ''
   );
   const [designation, setDesignation] = useState(
     normalizeDesignationLabel(profile.designation) ||

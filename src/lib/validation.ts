@@ -15,14 +15,14 @@ export const BLUEPRINT_LIMITS = {
   DISPLAY_NAME_MAX: 80,
   DESIGNATION_MIN: 2,
   DESIGNATION_MAX: 80,
-  TERRITORY_MIN: 2,
+  TERRITORY_MIN: 1,
   TERRITORY_MAX: 80,
-  AREA_MIN: 2,
+  AREA_MIN: 1,
   AREA_MAX: 80,
-  REGION_MIN: 2,
+  REGION_MIN: 1,
   REGION_MAX: 80,
   EMAIL_MAX: 160,
-  EMPLOYEE_CODE_MIN: 2,
+  EMPLOYEE_CODE_MIN: 1,
   EMPLOYEE_CODE_MAX: 40,
   MOBILE_NO_MIN: 7,
   MOBILE_NO_MAX: 20,
@@ -57,8 +57,23 @@ export const BLUEPRINT_LIMITS = {
   MANAGER_FEEDBACK_MAX: 800,
 } as const;
 
+const BANGLA_DIGIT_BASE = 0x09e6;
+
+/**
+ * Converts Bangla numerals (০-৯) to ASCII numerals (0-9) so colleagues typing in Bangla
+ * keyboard layout do not have Employee IDs or Mobile Numbers stripped.
+ */
+export function normalizeBanglaDigits(raw: string): string {
+  return raw.replace(/[\u09E6-\u09EF]/g, (ch) =>
+    String(ch.charCodeAt(0) - BANGLA_DIGIT_BASE)
+  );
+}
+
 export function sanitizeId(raw: string): string {
-  const cleaned = raw.trim().replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, BLUEPRINT_LIMITS.ID_MAX);
+  const cleaned = normalizeBanglaDigits(raw)
+    .trim()
+    .replace(/[^a-zA-Z0-9_\-]/g, '_')
+    .slice(0, BLUEPRINT_LIMITS.ID_MAX);
   return cleaned.length > 0 ? cleaned : `id_${Date.now()}`;
 }
 
@@ -67,7 +82,7 @@ export function validateId(id: string): boolean {
 }
 
 export function sanitizeEmployeeId(raw: string): string {
-  return raw
+  return normalizeBanglaDigits(raw)
     .trim()
     .replace(/[^a-zA-Z0-9_\-./ ]/g, '')
     .replace(/\s+/g, ' ')
@@ -75,7 +90,7 @@ export function sanitizeEmployeeId(raw: string): string {
 }
 
 export function sanitizeMobileNo(raw: string): string {
-  return raw
+  return normalizeBanglaDigits(raw)
     .trim()
     .replace(/[^0-9+\-() ]/g, '')
     .replace(/\s+/g, ' ')
@@ -100,6 +115,20 @@ export interface DesignationLocationRequirements {
   regionRequired: true;
 }
 
+const REGIONAL_LEVEL_DESIGNATIONS = new Set([
+  'Regional Manager',
+  'Regional Sales Manager',
+  'RSM',
+  'Zonal Manager',
+  'National Sales Manager',
+]);
+
+const AREA_LEVEL_DESIGNATIONS = new Set([
+  'Area Manager',
+  'Area Sales Manager',
+  'ASM',
+]);
+
 export function normalizeDesignationLabel(designation: string | null | undefined): string {
   const trimmed = (designation || '').trim();
   if (trimmed === 'Area Sales Manager') {
@@ -111,15 +140,16 @@ export function normalizeDesignationLabel(designation: string | null | undefined
 export function getLocationRequirementsForDesignation(
   designation: string | null | undefined
 ): DesignationLocationRequirements {
-  const normalized = normalizeDesignationLabel(designation);
-  if (normalized === 'Regional Manager') {
+  const trimmed = (designation || '').trim();
+  const normalized = normalizeDesignationLabel(trimmed);
+  if (REGIONAL_LEVEL_DESIGNATIONS.has(trimmed) || REGIONAL_LEVEL_DESIGNATIONS.has(normalized)) {
     return {
       territoryRequired: false,
       areaRequired: false,
       regionRequired: true,
     };
   }
-  if (normalized === 'Area Manager') {
+  if (AREA_LEVEL_DESIGNATIONS.has(trimmed) || AREA_LEVEL_DESIGNATIONS.has(normalized)) {
     return {
       territoryRequired: false,
       areaRequired: true,
@@ -146,20 +176,13 @@ export function getMissingRegistrationFields(
     missing.push('Name');
   }
 
-  const empId = (profile?.employeeId || '').trim();
-  const privEmp = (privateInfo?.employeeCode || '').trim();
-  // Require explicit Employee ID on both public and private records
+  const empId = sanitizeEmployeeId(profile?.employeeId || '');
+  const privEmp = sanitizeEmployeeId(privateInfo?.employeeCode || '');
   if (
-    !profile?.isRegistrationComplete ||
-    empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN ||
+    empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN &&
     privEmp.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN
   ) {
-    if (
-      empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN ||
-      privEmp.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN
-    ) {
-      missing.push('Employee ID');
-    }
+    missing.push('Employee ID');
   }
 
   if (
@@ -192,7 +215,6 @@ export function isColleagueRegistrationComplete(
   privateInfo: PrivateUserInfo | null | undefined
 ): boolean {
   if (!profile || !privateInfo) return false;
-  if (profile.isRegistrationComplete !== true) return false;
   return getMissingRegistrationFields(profile, privateInfo).length === 0;
 }
 

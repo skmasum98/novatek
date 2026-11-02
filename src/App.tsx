@@ -63,6 +63,7 @@ import {
   ensureUserProfile,
   fetchProductSubcollections,
   markStudyResourceCompleted,
+  RegistrationIncompleteError,
   seedFlagshipCurriculum,
   submitProductExam,
   updateColleagueProfile,
@@ -1499,7 +1500,10 @@ function NovatekAcademyPortal() {
             }}
             onNotify={showToast}
           />
-        ) : route === 'exam' && selectedProduct && publicProfile && registrationComplete ? (
+        ) : route === 'exam' &&
+          selectedProduct &&
+          publicProfile &&
+          (registrationComplete || loadedSubcollectionProductId === selectedProduct.id) ? (
           loadingSubcollections || loadedSubcollectionProductId !== selectedProduct.id ? (
             <div className="max-w-4xl mx-auto px-6 py-16 space-y-5">
               <div className="bg-white border border-slate-200 rounded-xl p-8 space-y-4">
@@ -1546,18 +1550,25 @@ function NovatekAcademyPortal() {
               onCancelExam={() => navigateAwayFromExam('study')}
               onExitToCatalog={() => navigateAwayFromExam('catalog')}
               onSubmitExam={async ({ mcqSelections, textResponses, durationSeconds }) => {
-                const sub = await submitProductExam({
-                  userProfile: publicProfile,
-                  privateInfo,
-                  product: selectedProduct,
-                  questions: activeQuestions,
-                  mcqSelections,
-                  textResponses,
-                  durationSeconds,
-                });
-                clearExamParamFromUrl();
-                showToast('Exam submitted and leaderboard updated.');
-                return sub;
+                try {
+                  const sub = await submitProductExam({
+                    userProfile: publicProfile,
+                    privateInfo,
+                    product: selectedProduct,
+                    questions: activeQuestions,
+                    mcqSelections,
+                    textResponses,
+                    durationSeconds,
+                  });
+                  clearExamParamFromUrl();
+                  showToast('Exam submitted and leaderboard updated.');
+                  return sub;
+                } catch (err) {
+                  if (err instanceof RegistrationIncompleteError) {
+                    handleOpenRegistrationModal(true);
+                  }
+                  throw err;
+                }
               }}
               onOpenLeaderboard={(prodId) => {
                 setLeaderboardFilterId(prodId);

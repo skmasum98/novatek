@@ -155,6 +155,24 @@ export const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({
         durationSeconds: cappedElapsedSec,
       });
       setCompletedSubmission(result);
+    } catch (err) {
+      let friendlyMsg =
+        'Could not save your exam submission right now. Your answers are preserved—please click Submit Certification Exam again.';
+      if (err instanceof Error && err.message) {
+        try {
+          const parsed = JSON.parse(err.message) as { error?: string };
+          if (parsed && typeof parsed.error === 'string') {
+            friendlyMsg =
+              'Could not verify exam submission permissions with the server. Please verify your Colleague Info in the top-right menu, then click Submit Certification Exam again — all your answers remain saved on screen.';
+          } else {
+            friendlyMsg = err.message;
+          }
+        } catch {
+          friendlyMsg = err.message;
+        }
+      }
+      setValidationNotice(friendlyMsg);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsSubmitting(false);
     }
@@ -445,6 +463,7 @@ export const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({
       : 'text-slate-500';
 
   const inputsLocked = isSubmitting || remainingSeconds === 0;
+  const submitButtonDisabled = isSubmitting;
 
   // Active Timed Certification Exam
   return (
@@ -694,8 +713,8 @@ export const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({
         </p>
         <button
           type="button"
-          disabled={inputsLocked}
-          onClick={() => void performSubmit(false)}
+          disabled={submitButtonDisabled}
+          onClick={() => void performSubmit(remainingSeconds === 0)}
           className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 disabled:opacity-50 transition-colors cursor-pointer whitespace-nowrap shrink-0"
         >
           <CheckCircle2 className="w-4 h-4" />
