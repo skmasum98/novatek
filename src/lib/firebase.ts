@@ -12,6 +12,79 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'skmasum98@gmail.com';
 export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
 export const FIRESTORE_DATABASE_ID = firebaseConfig.firestoreDatabaseId;
+export const FIREBASE_AUTH_SETTINGS_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
+
+export interface ParsedAuthError {
+  code: string;
+  message: string;
+  unauthorizedDomain?: string;
+}
+
+export function parseFirebaseAuthError(error: unknown): ParsedAuthError {
+  const rawCode =
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : '';
+  const rawMessage = error instanceof Error ? error.message : String(error ?? '');
+  const hostname =
+    typeof window !== 'undefined' && window.location?.hostname
+      ? window.location.hostname
+      : 'novateklearn.netlify.app';
+
+  if (
+    rawCode === 'auth/unauthorized-domain' ||
+    rawMessage.includes('auth/unauthorized-domain')
+  ) {
+    return {
+      code: 'auth/unauthorized-domain',
+      unauthorizedDomain: hostname,
+      message: `This deployment domain (${hostname}) is not yet authorized in Firebase Authentication for project "${FIREBASE_PROJECT_ID}".`,
+    };
+  }
+
+  if (
+    rawCode === 'auth/popup-blocked' ||
+    rawMessage.includes('auth/popup-blocked')
+  ) {
+    return {
+      code: 'auth/popup-blocked',
+      message:
+        'Your browser blocked the Google Sign-In popup window. Please allow popups for this site in your browser address bar and try again.',
+    };
+  }
+
+  if (
+    rawCode === 'auth/popup-closed-by-user' ||
+    rawCode === 'auth/cancelled-popup-request' ||
+    rawMessage.includes('auth/popup-closed-by-user') ||
+    rawMessage.includes('auth/cancelled-popup-request')
+  ) {
+    return {
+      code: rawCode || 'auth/popup-closed-by-user',
+      message:
+        'The Google Sign-In window was closed before completing authentication. Click Sign In to try again.',
+    };
+  }
+
+  if (
+    rawCode === 'auth/network-request-failed' ||
+    rawMessage.includes('auth/network-request-failed')
+  ) {
+    return {
+      code: 'auth/network-request-failed',
+      message:
+        'Network connection failed while contacting Google Sign-In. Please check your internet connection and try again.',
+    };
+  }
+
+  return {
+    code: rawCode || 'auth/unknown',
+    message: rawMessage || 'Google Sign-In could not be completed. Please try again.',
+  };
+}
 
 export enum OperationType {
   CREATE = 'create',
