@@ -1,0 +1,6 @@
+{
+  "name": "Novatek Academy — Product Mastery & Certification",
+  "description": "Internal pharmaceutical product learning, multimedia training resources, clinical MCQ & written certification exams, and regional colleague leaderboard for Novatek Pharmaceutical Limited.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

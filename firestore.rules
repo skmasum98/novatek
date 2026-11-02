@@ -1,0 +1,691 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Hardened Primitives
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'skmasum98@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string &&
+        id.size() >= 1 &&
+        id.size() <= 128 &&
+        id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function hasOwnUidPrefix(docId) {
+      return docId.size() > request.auth.uid.size() + 1 &&
+        docId[0:request.auth.uid.size() + 1] == request.auth.uid + '_';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (Synchronized with firebase-blueprint.json)
+    // =========================================================================
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'grantedBy', 'region', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'grantedBy', 'region', 'visibility', 'createdAt']) &&
+        isValidId(data.uid) &&
+        isValidId(data.grantedBy) &&
+        data.region is string && data.region.size() >= 2 && data.region.size() <= 80 &&
+        (!('visibility' in data) || (data.visibility is string && data.visibility.size() == 3 && data.visibility == 'org')) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidPublicProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'designation', 'region', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'displayName', 'designation', 'employeeId',
+          'territory', 'area', 'region', 'isRegistrationComplete',
+          'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 80 &&
+        data.designation is string && data.designation.size() >= 2 && data.designation.size() <= 80 &&
+        (!('employeeId' in data) || (
+          data.employeeId is string &&
+          data.employeeId.size() <= 40 &&
+          (data.employeeId.size() == 0 || (data.employeeId.size() >= 2 && data.employeeId.matches('^[a-zA-Z0-9_\\-./ ]+$')))
+        )) &&
+        (!('territory' in data) || (data.territory is string && data.territory.size() <= 80)) &&
+        (!('area' in data) || (data.area is string && data.area.size() <= 80)) &&
+        data.region is string && data.region.size() >= 2 && data.region.size() <= 80 &&
+        (!('isRegistrationComplete' in data) || data.isRegistrationComplete is bool) &&
+        (!('isRegistrationComplete' in data) || data.isRegistrationComplete == false || (
+          'employeeId' in data && data.employeeId.size() >= 2 &&
+          'territory' in data && data.territory.size() >= 2 &&
+          'area' in data && data.area.size() >= 2
+        )) &&
+        data.visibility is string && data.visibility.size() == 3 && data.visibility == 'org' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPrivateUserInfo(data) {
+      return data.keys().hasAll(['uid', 'email', 'employeeCode', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'employeeCode', 'mobileNo', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.employeeCode is string && data.employeeCode.size() <= 40 &&
+        (data.employeeCode.size() == 0 || (data.employeeCode.size() >= 2 && data.employeeCode.matches('^[a-zA-Z0-9_\\-./ ]+$'))) &&
+        (!('mobileNo' in data) || (
+          data.mobileNo is string &&
+          data.mobileNo.size() <= 20 &&
+          (data.mobileNo.size() == 0 || (data.mobileNo.size() >= 7 && data.mobileNo.matches('^[0-9+\\-() ]+$')))
+        )) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isCompleteColleagueProfile(prof) {
+      return prof.displayName is string && prof.displayName.size() >= 2 &&
+        'employeeId' in prof && prof.employeeId is string && prof.employeeId.size() >= 2 &&
+        'territory' in prof && prof.territory is string && prof.territory.size() >= 2 &&
+        'area' in prof && prof.area is string && prof.area.size() >= 2 &&
+        prof.region is string && prof.region.size() >= 2 &&
+        'isRegistrationComplete' in prof && prof.isRegistrationComplete == true;
+    }
+
+    function isCompletePrivateUserInfo(priv) {
+      return priv.employeeCode is string && priv.employeeCode.size() >= 2 &&
+        'mobileNo' in priv && priv.mobileNo is string && priv.mobileNo.size() >= 7;
+    }
+
+    function isValidTherapeuticClass(val) {
+      return val is string && val.size() >= 3 && val.size() <= 40 && (
+        val == 'Cardiovascular' ||
+        val == 'Metabolic & Endocrine' ||
+        val == 'Respiratory' ||
+        val == 'Gastroenterology' ||
+        val == 'Neurology' ||
+        val == 'Anti-Infectives'
+      );
+    }
+
+    function isValidProductModule(data) {
+      return data.keys().hasAll([
+          'id', 'brandName', 'genericComposition', 'therapeuticClass',
+          'summary', 'indications', 'dosageGuidance', 'keySellingPoints',
+          'coverImageKey', 'passingPercentage', 'examDurationMinutes',
+          'resourceCount', 'questionCount', 'status', 'authorId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'brandName', 'genericComposition', 'therapeuticClass',
+          'summary', 'indications', 'dosageGuidance', 'keySellingPoints',
+          'coverImageKey', 'passingPercentage', 'examDurationMinutes',
+          'examEnabled', 'allowRetakes',
+          'resourceCount', 'questionCount', 'status', 'authorId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.brandName is string && data.brandName.size() >= 2 && data.brandName.size() <= 100 &&
+        data.genericComposition is string && data.genericComposition.size() >= 2 && data.genericComposition.size() <= 160 &&
+        isValidTherapeuticClass(data.therapeuticClass) &&
+        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 600 &&
+        data.indications is string && data.indications.size() >= 5 && data.indications.size() <= 1200 &&
+        data.dosageGuidance is string && data.dosageGuidance.size() >= 5 && data.dosageGuidance.size() <= 800 &&
+        data.keySellingPoints is string && data.keySellingPoints.size() >= 5 && data.keySellingPoints.size() <= 1200 &&
+        data.coverImageKey is string && data.coverImageKey.size() >= 2 && data.coverImageKey.size() <= 240 &&
+        data.passingPercentage is int && data.passingPercentage >= 50 && data.passingPercentage <= 100 &&
+        data.examDurationMinutes is int && data.examDurationMinutes >= 1 && data.examDurationMinutes <= 180 &&
+        (!('examEnabled' in data) || data.examEnabled is bool) &&
+        (!('allowRetakes' in data) || data.allowRetakes is bool) &&
+        data.resourceCount is int && data.resourceCount >= 0 && data.resourceCount <= 25 &&
+        data.questionCount is int && data.questionCount >= 0 && data.questionCount <= 25 &&
+        data.status is string && data.status.size() <= 16 && (data.status == 'published' || data.status == 'draft') &&
+        isValidId(data.authorId) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLearningResource(data) {
+      return data.keys().hasAll([
+          'id', 'productId', 'authorId', 'productStatus', 'orderIndex',
+          'resourceType', 'title', 'estimatedMinutes', 'bodyText',
+          'mediaUrl', 'mediaCaption', 'clinicalTakeaway', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'productId', 'authorId', 'productStatus', 'orderIndex',
+          'resourceType', 'title', 'estimatedMinutes', 'bodyText',
+          'mediaUrl', 'mediaCaption', 'clinicalTakeaway', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.productId) &&
+        isValidId(data.authorId) &&
+        data.productStatus is string && data.productStatus.size() <= 16 && (data.productStatus == 'published' || data.productStatus == 'draft') &&
+        data.orderIndex is int && data.orderIndex >= 0 && data.orderIndex <= 50 &&
+        data.resourceType is string && data.resourceType.size() <= 10 && (
+          data.resourceType == 'text' || data.resourceType == 'video' || data.resourceType == 'image'
+        ) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 240 &&
+        data.estimatedMinutes is int && data.estimatedMinutes >= 1 && data.estimatedMinutes <= 90 &&
+        data.bodyText is string && data.bodyText.size() >= 10 && data.bodyText.size() <= 8000 &&
+        data.mediaUrl is string && data.mediaUrl.size() <= 500 &&
+        data.mediaCaption is string && data.mediaCaption.size() <= 300 &&
+        data.clinicalTakeaway is string && data.clinicalTakeaway.size() >= 5 && data.clinicalTakeaway.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidExamQuestion(data) {
+      return data.keys().hasAll([
+          'id', 'productId', 'authorId', 'productStatus', 'orderIndex',
+          'questionType', 'prompt', 'points', 'options', 'correctOptionIndex',
+          'rubricKeywords', 'modelAnswer', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'productId', 'authorId', 'productStatus', 'orderIndex',
+          'questionType', 'prompt', 'points', 'options', 'correctOptionIndex',
+          'rubricKeywords', 'modelAnswer', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.productId) &&
+        isValidId(data.authorId) &&
+        data.productStatus is string && data.productStatus.size() <= 16 && (data.productStatus == 'published' || data.productStatus == 'draft') &&
+        data.orderIndex is int && data.orderIndex >= 0 && data.orderIndex <= 50 &&
+        data.questionType is string && data.questionType.size() <= 10 && (
+          data.questionType == 'mcq' || data.questionType == 'text'
+        ) &&
+        data.prompt is string && data.prompt.size() >= 8 && data.prompt.size() <= 600 &&
+        data.points is int && data.points >= 1 && data.points <= 100 &&
+        data.options is list && data.options.size() <= 6 &&
+        (data.options.size() == 0 || (data.options[0] is string && data.options[0].size() >= 1 && data.options[0].size() <= 240)) &&
+        data.correctOptionIndex is int && data.correctOptionIndex >= -1 && data.correctOptionIndex <= 5 &&
+        data.rubricKeywords is list && data.rubricKeywords.size() <= 8 &&
+        (data.rubricKeywords.size() == 0 || (data.rubricKeywords[0] is string && data.rubricKeywords[0].size() >= 1 && data.rubricKeywords[0].size() <= 80)) &&
+        data.modelAnswer is string && data.modelAnswer.size() >= 2 && data.modelAnswer.size() <= 1000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLearningProgress(data) {
+      return data.keys().hasAll([
+          'userId', 'productId', 'completedResourceIds',
+          'isModuleCompleted', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'productId', 'completedResourceIds',
+          'isModuleCompleted', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.userId) &&
+        isValidId(data.productId) &&
+        data.completedResourceIds is list && data.completedResourceIds.size() <= 25 &&
+        (data.completedResourceIds.size() == 0 || isValidId(data.completedResourceIds[0])) &&
+        data.isModuleCompleted is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidResponseEntry(entry) {
+      return entry is map &&
+        entry.keys().hasAll([
+          'questionId', 'questionPrompt', 'questionType',
+          'selectedOptionIndex', 'textAnswer', 'awardedPoints', 'maxPoints'
+        ]) &&
+        entry.keys().hasOnly([
+          'questionId', 'questionPrompt', 'questionType',
+          'selectedOptionIndex', 'textAnswer', 'awardedPoints', 'maxPoints'
+        ]) &&
+        isValidId(entry.questionId) &&
+        entry.questionPrompt is string && entry.questionPrompt.size() >= 1 && entry.questionPrompt.size() <= 600 &&
+        entry.questionType is string && entry.questionType.size() <= 10 &&
+        entry.selectedOptionIndex is int && entry.selectedOptionIndex >= -1 && entry.selectedOptionIndex <= 5 &&
+        entry.textAnswer is string && entry.textAnswer.size() <= 2000 &&
+        entry.awardedPoints is int && entry.awardedPoints >= 0 && entry.awardedPoints <= 100 &&
+        entry.maxPoints is int && entry.maxPoints >= 1 && entry.maxPoints <= 100;
+    }
+
+    function isValidExamSubmission(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'userRegion', 'userDesignation',
+          'productId', 'productName', 'productAuthorId', 'responses',
+          'awardedScore', 'maxScore', 'percentage', 'passed',
+          'hasTextQuestions', 'gradingStatus', 'managerFeedback',
+          'durationSeconds', 'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userName', 'userRegion', 'userDesignation',
+          'userEmployeeId', 'userTerritory', 'userArea',
+          'productId', 'productName', 'productAuthorId', 'responses',
+          'awardedScore', 'maxScore', 'percentage', 'passed',
+          'hasTextQuestions', 'gradingStatus', 'managerFeedback',
+          'durationSeconds', 'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 80 &&
+        data.userRegion is string && data.userRegion.size() >= 2 && data.userRegion.size() <= 80 &&
+        data.userDesignation is string && data.userDesignation.size() >= 2 && data.userDesignation.size() <= 80 &&
+        (!('userEmployeeId' in data) || (data.userEmployeeId is string && data.userEmployeeId.size() <= 40)) &&
+        (!('userTerritory' in data) || (data.userTerritory is string && data.userTerritory.size() <= 80)) &&
+        (!('userArea' in data) || (data.userArea is string && data.userArea.size() <= 80)) &&
+        isValidId(data.productId) &&
+        data.productName is string && data.productName.size() >= 2 && data.productName.size() <= 100 &&
+        isValidId(data.productAuthorId) &&
+        data.responses is list && data.responses.size() >= 1 && data.responses.size() <= 25 &&
+        isValidResponseEntry(data.responses[0]) &&
+        data.awardedScore is int && data.awardedScore >= 0 && data.awardedScore <= 2500 &&
+        data.maxScore is int && data.maxScore >= 1 && data.maxScore <= 2500 &&
+        data.awardedScore <= data.maxScore &&
+        data.percentage is int && data.percentage >= 0 && data.percentage <= 100 &&
+        data.passed is bool &&
+        data.hasTextQuestions is bool &&
+        data.gradingStatus is string && data.gradingStatus.size() <= 20 && (
+          data.gradingStatus == 'pending_review' || data.gradingStatus == 'finalized'
+        ) &&
+        data.managerFeedback is string && data.managerFeedback.size() <= 800 &&
+        data.durationSeconds is int && data.durationSeconds >= 1 && data.durationSeconds <= 14400 &&
+        data.visibility is string && data.visibility.size() == 3 && data.visibility == 'org' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeaderboardEntry(data) {
+      return data.keys().hasAll([
+          'userId', 'userName', 'userRegion', 'userDesignation',
+          'productId', 'productName', 'submissionId', 'score',
+          'maxScore', 'percentage', 'passed', 'durationSeconds',
+          'gradingStatus', 'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'userName', 'userRegion', 'userDesignation',
+          'userEmployeeId', 'userTerritory', 'userArea',
+          'productId', 'productName', 'submissionId', 'score',
+          'maxScore', 'percentage', 'passed', 'durationSeconds',
+          'gradingStatus', 'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 80 &&
+        data.userRegion is string && data.userRegion.size() >= 2 && data.userRegion.size() <= 80 &&
+        data.userDesignation is string && data.userDesignation.size() >= 2 && data.userDesignation.size() <= 80 &&
+        (!('userEmployeeId' in data) || (data.userEmployeeId is string && data.userEmployeeId.size() <= 40)) &&
+        (!('userTerritory' in data) || (data.userTerritory is string && data.userTerritory.size() <= 80)) &&
+        (!('userArea' in data) || (data.userArea is string && data.userArea.size() <= 80)) &&
+        isValidId(data.productId) &&
+        data.productName is string && data.productName.size() >= 2 && data.productName.size() <= 100 &&
+        isValidId(data.submissionId) &&
+        data.score is int && data.score >= 0 && data.score <= 2500 &&
+        data.maxScore is int && data.maxScore >= 1 && data.maxScore <= 2500 &&
+        data.score <= data.maxScore &&
+        data.percentage is int && data.percentage >= 0 && data.percentage <= 100 &&
+        data.passed is bool &&
+        data.durationSeconds is int && data.durationSeconds >= 1 && data.durationSeconds <= 14400 &&
+        data.gradingStatus is string && data.gradingStatus.size() <= 20 && (
+          data.gradingStatus == 'pending_review' || data.gradingStatus == 'finalized'
+        ) &&
+        data.visibility is string && data.visibility.size() == 3 && data.visibility == 'org' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Match Blocks (All 9 Collections from firebase-blueprint.json)
+    // =========================================================================
+
+    // 1. /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list: if isSignedIn() && (
+        existing().grantedBy == request.auth.uid ||
+        existing().visibility == 'org'
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(adminId) &&
+        isValidAdminRecord(incoming()) &&
+        incoming().uid == adminId &&
+        incoming().grantedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if false;
+      allow delete: if isVerifiedUser() && isValidId(adminId) && isAdmin();
+    }
+
+    // 2. /profiles/{userId} (Non-PII Public Colleague Profile)
+    match /profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (
+        request.auth.uid == userId ||
+        (resource != null && existing().visibility == 'org')
+      );
+      allow list: if isSignedIn() && existing().visibility == 'org';
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        userId == request.auth.uid &&
+        isValidPublicProfile(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidPublicProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (request.auth.uid == userId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'designation', 'employeeId',
+              'territory', 'area', 'region', 'isRegistrationComplete', 'updatedAt'
+            ])) ||
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() && isValidId(userId) && isAdmin();
+    }
+
+    // 3. /users_private/{userId} (Strictly Isolated PII)
+    match /users_private/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if false;
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        userId == request.auth.uid &&
+        isValidPrivateUserInfo(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().email == request.auth.token.email &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidPrivateUserInfo(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (request.auth.uid == userId &&
+            incoming().email == request.auth.token.email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['employeeCode', 'mobileNo', 'email', 'updatedAt'])) ||
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() && isValidId(userId) && isAdmin();
+    }
+
+    // 4. /products/{productId}
+    match /products/{productId} {
+      allow get: if isSignedIn() && isValidId(productId) && (
+        (resource != null && (existing().status == 'published' || existing().authorId == request.auth.uid)) ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().status == 'published' ||
+        existing().authorId == request.auth.uid ||
+        (isBootstrappedAdmin() && existing().status == 'draft')
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProductModule(incoming()) &&
+        incoming().id == productId &&
+        incoming().authorId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProductModule(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().authorId == existing().authorId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'brandName', 'genericComposition', 'therapeuticClass',
+            'summary', 'indications', 'dosageGuidance', 'keySellingPoints',
+            'coverImageKey', 'passingPercentage', 'examDurationMinutes',
+            'examEnabled', 'allowRetakes',
+            'resourceCount', 'questionCount', 'status', 'updatedAt'
+          ])
+        );
+      allow delete: if isVerifiedUser() && isValidId(productId) && isAdmin();
+
+      // 5. /products/{productId}/resources/{resourceId} (Master Gate Subcollection)
+      match /resources/{resourceId} {
+        allow get: if isSignedIn() &&
+          isValidId(productId) &&
+          isValidId(resourceId) && (
+            get(/databases/$(database)/documents/products/$(productId)).data.status == 'published' ||
+            get(/databases/$(database)/documents/products/$(productId)).data.authorId == request.auth.uid ||
+            isAdmin()
+          );
+        allow list: if isSignedIn() &&
+          isValidId(productId) && (
+            existing().productStatus == 'published' ||
+            existing().authorId == request.auth.uid ||
+            (isBootstrappedAdmin() && existing().productStatus == 'draft')
+          );
+        allow create: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(resourceId) &&
+          isValidLearningResource(incoming()) &&
+          incoming().id == resourceId &&
+          incoming().productId == productId &&
+          incoming().authorId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isAdmin() &&
+          (exists(/databases/$(database)/documents/products/$(productId)) ||
+           existsAfter(/databases/$(database)/documents/products/$(productId)));
+        allow update: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(resourceId) &&
+          isValidLearningResource(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().productId == existing().productId &&
+          incoming().authorId == existing().authorId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          isAdmin() &&
+          exists(/databases/$(database)/documents/products/$(productId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'productStatus', 'orderIndex', 'resourceType', 'title',
+            'estimatedMinutes', 'bodyText', 'mediaUrl', 'mediaCaption',
+            'clinicalTakeaway', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(resourceId) &&
+          isAdmin() &&
+          exists(/databases/$(database)/documents/products/$(productId));
+      }
+
+      // 6. /products/{productId}/questions/{questionId} (Master Gate Subcollection)
+      match /questions/{questionId} {
+        allow get: if isSignedIn() &&
+          isValidId(productId) &&
+          isValidId(questionId) && (
+            get(/databases/$(database)/documents/products/$(productId)).data.status == 'published' ||
+            get(/databases/$(database)/documents/products/$(productId)).data.authorId == request.auth.uid ||
+            isAdmin()
+          );
+        allow list: if isSignedIn() &&
+          isValidId(productId) && (
+            existing().productStatus == 'published' ||
+            existing().authorId == request.auth.uid ||
+            (isBootstrappedAdmin() && existing().productStatus == 'draft')
+          );
+        allow create: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(questionId) &&
+          isValidExamQuestion(incoming()) &&
+          incoming().id == questionId &&
+          incoming().productId == productId &&
+          incoming().authorId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isAdmin() &&
+          (exists(/databases/$(database)/documents/products/$(productId)) ||
+           existsAfter(/databases/$(database)/documents/products/$(productId)));
+        allow update: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(questionId) &&
+          isValidExamQuestion(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().productId == existing().productId &&
+          incoming().authorId == existing().authorId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          isAdmin() &&
+          exists(/databases/$(database)/documents/products/$(productId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'productStatus', 'orderIndex', 'questionType', 'prompt',
+            'points', 'options', 'correctOptionIndex', 'rubricKeywords',
+            'modelAnswer', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() &&
+          isValidId(productId) &&
+          isValidId(questionId) &&
+          isAdmin() &&
+          exists(/databases/$(database)/documents/products/$(productId));
+      }
+    }
+
+    // 7. /learning_progress/{progressId}
+    match /learning_progress/{progressId} {
+      allow get: if isSignedIn() && isValidId(progressId) && (
+        (resource == null && hasOwnUidPrefix(progressId)) ||
+        (resource != null && (existing().userId == request.auth.uid || isAdmin()))
+      );
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(progressId) &&
+        isValidLearningProgress(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        progressId == request.auth.uid + '_' + incoming().productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/products/$(incoming().productId));
+      allow update: if isVerifiedUser() &&
+        isValidId(progressId) &&
+        isValidLearningProgress(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().productId == existing().productId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (request.auth.uid == existing().userId &&
+            (existing().isModuleCompleted == false || incoming().isModuleCompleted == true) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'completedResourceIds', 'isModuleCompleted', 'updatedAt'
+            ])) ||
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() && isValidId(progressId) && isAdmin();
+    }
+
+    // 8. /exam_submissions/{submissionId}
+    match /exam_submissions/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId) && (
+        (resource != null && (
+          existing().userId == request.auth.uid ||
+          existing().productAuthorId == request.auth.uid
+        )) ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        existing().productAuthorId == request.auth.uid ||
+        (isBootstrappedAdmin() && existing().visibility == 'org')
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(submissionId) &&
+        isValidExamSubmission(incoming()) &&
+        incoming().id == submissionId &&
+        incoming().userId == request.auth.uid &&
+        incoming().managerFeedback.size() == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isCompleteColleagueProfile(get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data) &&
+        isCompletePrivateUserInfo(get(/databases/$(database)/documents/users_private/$(request.auth.uid)).data) &&
+        get(/databases/$(database)/documents/products/$(incoming().productId)).data.status == 'published' &&
+        (!('examEnabled' in get(/databases/$(database)/documents/products/$(incoming().productId)).data) ||
+          get(/databases/$(database)/documents/products/$(incoming().productId)).data.examEnabled == true) &&
+        (!('allowRetakes' in get(/databases/$(database)/documents/products/$(incoming().productId)).data) ||
+          get(/databases/$(database)/documents/products/$(incoming().productId)).data.allowRetakes == true ||
+          !exists(/databases/$(database)/documents/leaderboard/$(request.auth.uid + '_' + incoming().productId))) &&
+        existsAfter(/databases/$(database)/documents/leaderboard/$(request.auth.uid + '_' + incoming().productId));
+      allow update: if isVerifiedUser() &&
+        isValidId(submissionId) &&
+        isValidExamSubmission(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().productId == existing().productId &&
+        incoming().productAuthorId == existing().productAuthorId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'responses', 'awardedScore', 'percentage', 'passed',
+            'gradingStatus', 'managerFeedback', 'updatedAt'
+          ])
+        );
+      allow delete: if isVerifiedUser() && isValidId(submissionId) && isAdmin();
+    }
+
+    // 9. /leaderboard/{entryId} (Non-PII Organization Leaderboard)
+    match /leaderboard/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId) && (
+        (resource == null && hasOwnUidPrefix(entryId)) ||
+        (resource != null && existing().visibility == 'org')
+      );
+      allow list: if isSignedIn() && existing().visibility == 'org';
+      allow create: if isVerifiedUser() &&
+        isValidId(entryId) &&
+        isValidLeaderboardEntry(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        entryId == request.auth.uid + '_' + incoming().productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        get(/databases/$(database)/documents/products/$(incoming().productId)).data.status == 'published' &&
+        existsAfter(/databases/$(database)/documents/exam_submissions/$(incoming().submissionId));
+      allow update: if isVerifiedUser() &&
+        isValidId(entryId) &&
+        isValidLeaderboardEntry(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().productId == existing().productId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (request.auth.uid == existing().userId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'submissionId', 'score', 'maxScore', 'percentage', 'passed',
+              'durationSeconds', 'gradingStatus', 'userName', 'userRegion',
+              'userDesignation', 'userEmployeeId', 'userTerritory', 'userArea',
+              'productName', 'updatedAt'
+            ]) &&
+            get(/databases/$(database)/documents/products/$(incoming().productId)).data.status == 'published' &&
+            existsAfter(/databases/$(database)/documents/exam_submissions/$(incoming().submissionId))) ||
+          (isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'score', 'percentage', 'passed', 'gradingStatus', 'updatedAt'
+            ]))
+        );
+      allow delete: if isVerifiedUser() && isValidId(entryId) && isAdmin();
+    }
+  }
+}

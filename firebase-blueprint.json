@@ -1,0 +1,857 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted RBAC document granting Regional Manager / Training Administrator permissions.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "grantedBy": {
+          "type": "string",
+          "description": "UID of the administrator who granted this role.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "region": {
+          "type": "string",
+          "description": "Assigned pharmaceutical sales region.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["org"],
+          "maxLength": 3,
+          "description": "Organization visibility token for QAP-compliant admin directory queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of role creation."
+        }
+      },
+      "required": ["uid", "grantedBy", "region", "createdAt"]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Non-PII colleague profile visible within Novatek Pharmaceutical Limited for training attribution.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the colleague.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Colleague full display name.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "designation": {
+          "type": "string",
+          "description": "Field or commercial job title.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "employeeId": {
+          "type": "string",
+          "description": "Colleague official Novatek Employee ID.",
+          "minLength": 0,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-./ ]*$"
+        },
+        "territory": {
+          "type": "string",
+          "description": "Assigned pharmaceutical field territory.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "area": {
+          "type": "string",
+          "description": "Assigned commercial sales area.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "region": {
+          "type": "string",
+          "description": "Assigned sales region.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "isRegistrationComplete": {
+          "type": "boolean",
+          "description": "True once Name, Employee ID, Territory, Area, Region, and Mobile No are verified."
+        },
+        "visibility": {
+          "type": "string",
+          "description": "Organization scope marker for query enforcement.",
+          "enum": ["org"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["uid", "displayName", "designation", "region", "visibility", "createdAt", "updatedAt"]
+    },
+    "PrivateUserInfo": {
+      "title": "PrivateUserInfo",
+      "description": "Strictly isolated PII record containing colleague email, employee ID, and mobile number.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the colleague.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified colleague email address.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "employeeCode": {
+          "type": "string",
+          "description": "Novatek Employee ID.",
+          "minLength": 0,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-./ ]*$"
+        },
+        "mobileNo": {
+          "type": "string",
+          "description": "Strictly isolated colleague mobile phone number (PII).",
+          "minLength": 0,
+          "maxLength": 20,
+          "pattern": "^[0-9+\\-() ]*$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["uid", "email", "employeeCode", "createdAt", "updatedAt"]
+    },
+    "ProductModule": {
+      "title": "ProductModule",
+      "description": "Pharmaceutical product learning module and certification exam configuration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product slug or ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "brandName": {
+          "type": "string",
+          "description": "Novatek commercial brand name.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "genericComposition": {
+          "type": "string",
+          "description": "Active pharmaceutical ingredients and strengths.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "therapeuticClass": {
+          "type": "string",
+          "description": "Therapeutic division.",
+          "enum": [
+            "Cardiovascular",
+            "Metabolic & Endocrine",
+            "Respiratory",
+            "Gastroenterology",
+            "Neurology",
+            "Anti-Infectives"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "description": "Concise clinical positioning summary.",
+          "minLength": 10,
+          "maxLength": 600
+        },
+        "indications": {
+          "type": "string",
+          "description": "Approved clinical indications.",
+          "minLength": 5,
+          "maxLength": 1200
+        },
+        "dosageGuidance": {
+          "type": "string",
+          "description": "Recommended adult dosing and administration notes.",
+          "minLength": 5,
+          "maxLength": 800
+        },
+        "keySellingPoints": {
+          "type": "string",
+          "description": "Core clinical differentiation points for field colleagues.",
+          "minLength": 5,
+          "maxLength": 1200
+        },
+        "coverImageKey": {
+          "type": "string",
+          "description": "Asset key or URL for product cover photography.",
+          "minLength": 2,
+          "maxLength": 240
+        },
+        "passingPercentage": {
+          "type": "number",
+          "description": "Minimum percentage score (50 to 100) required to pass certification."
+        },
+        "examDurationMinutes": {
+          "type": "number",
+          "description": "Time limit in minutes (3 to 120) for the certification exam."
+        },
+        "examEnabled": {
+          "type": "boolean",
+          "description": "Whether the certification exam is currently unlocked by Admin for eligible colleagues."
+        },
+        "allowRetakes": {
+          "type": "boolean",
+          "description": "Whether colleagues may retake the certification exam after their first submission."
+        },
+        "resourceCount": {
+          "type": "number",
+          "description": "Total number of learning resources in this module."
+        },
+        "questionCount": {
+          "type": "number",
+          "description": "Total number of exam questions in this module."
+        },
+        "status": {
+          "type": "string",
+          "description": "Publication status.",
+          "enum": ["published", "draft"]
+        },
+        "authorId": {
+          "type": "string",
+          "description": "UID of the Regional Manager who authored the module.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "brandName",
+        "genericComposition",
+        "therapeuticClass",
+        "summary",
+        "indications",
+        "dosageGuidance",
+        "keySellingPoints",
+        "coverImageKey",
+        "passingPercentage",
+        "examDurationMinutes",
+        "resourceCount",
+        "questionCount",
+        "status",
+        "authorId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LearningResource": {
+      "title": "LearningResource",
+      "description": "Multimedia product study unit (clinical text monograph, video briefing, or visual diagram).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique resource ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Parent product module ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "description": "UID of the Regional Manager author.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productStatus": {
+          "type": "string",
+          "description": "Mirrored publication status of parent product for cost-safe list queries.",
+          "enum": ["published", "draft"]
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "Sequential study order index."
+        },
+        "resourceType": {
+          "type": "string",
+          "description": "Learning media format.",
+          "enum": ["text", "video", "image"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the study unit.",
+          "minLength": 3,
+          "maxLength": 240
+        },
+        "estimatedMinutes": {
+          "type": "number",
+          "description": "Estimated completion duration in minutes."
+        },
+        "bodyText": {
+          "type": "string",
+          "description": "Detailed clinical study content or video transcript notes.",
+          "minLength": 10,
+          "maxLength": 8000
+        },
+        "mediaUrl": {
+          "type": "string",
+          "description": "Video URL, interactive briefing identifier, or diagram asset key.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "mediaCaption": {
+          "type": "string",
+          "description": "Caption explaining the visual figure or video.",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "clinicalTakeaway": {
+          "type": "string",
+          "description": "Key clinical message to communicate to physicians.",
+          "minLength": 5,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "authorId",
+        "productStatus",
+        "orderIndex",
+        "resourceType",
+        "title",
+        "estimatedMinutes",
+        "bodyText",
+        "mediaUrl",
+        "mediaCaption",
+        "clinicalTakeaway",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamQuestion": {
+      "title": "ExamQuestion",
+      "description": "Product certification assessment item supporting MCQ and written clinical scenario formats.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique question ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Parent product module ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "description": "UID of the Regional Manager author.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productStatus": {
+          "type": "string",
+          "description": "Mirrored publication status of parent product.",
+          "enum": ["published", "draft"]
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "Question sequence index."
+        },
+        "questionType": {
+          "type": "string",
+          "description": "Question assessment type.",
+          "enum": ["mcq", "text"]
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Clinical question prompt or physician objection scenario.",
+          "minLength": 8,
+          "maxLength": 600
+        },
+        "points": {
+          "type": "number",
+          "description": "Point weight for this question (1 to 100)."
+        },
+        "options": {
+          "type": "array",
+          "description": "Bounded list of up to 6 answer choices for MCQ items."
+        },
+        "correctOptionIndex": {
+          "type": "number",
+          "description": "0-based correct option index for MCQ, or -1 for written text items."
+        },
+        "rubricKeywords": {
+          "type": "array",
+          "description": "Bounded list of up to 8 clinical keywords expected in text answers."
+        },
+        "modelAnswer": {
+          "type": "string",
+          "description": "Reference clinical explanation or ideal written response.",
+          "minLength": 2,
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "authorId",
+        "productStatus",
+        "orderIndex",
+        "questionType",
+        "prompt",
+        "points",
+        "options",
+        "correctOptionIndex",
+        "rubricKeywords",
+        "modelAnswer",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LearningProgress": {
+      "title": "LearningProgress",
+      "description": "Per-colleague study completion state for a specific product module; gates exam eligibility.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Colleague Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Product module ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "completedResourceIds": {
+          "type": "array",
+          "description": "Bounded list of completed resource IDs (max 25)."
+        },
+        "isModuleCompleted": {
+          "type": "boolean",
+          "description": "True once all required study units for the product are completed."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "productId",
+        "completedResourceIds",
+        "isModuleCompleted",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamSubmission": {
+      "title": "ExamSubmission",
+      "description": "Completed certification exam submission with MCQ answers, text answers, and grading status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Submission document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Submitting colleague UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Colleague display name.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userRegion": {
+          "type": "string",
+          "description": "Colleague territory or region.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userDesignation": {
+          "type": "string",
+          "description": "Colleague job designation.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userEmployeeId": {
+          "type": "string",
+          "description": "Colleague official Employee ID.",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "userTerritory": {
+          "type": "string",
+          "description": "Colleague assigned field territory.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "userArea": {
+          "type": "string",
+          "description": "Colleague assigned sales area.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "productId": {
+          "type": "string",
+          "description": "Assessed product module ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": {
+          "type": "string",
+          "description": "Assessed product brand name.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "productAuthorId": {
+          "type": "string",
+          "description": "Author UID of the assessed product module.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "responses": {
+          "type": "array",
+          "description": "Bounded list of up to 25 question response maps."
+        },
+        "awardedScore": {
+          "type": "number",
+          "description": "Total points earned."
+        },
+        "maxScore": {
+          "type": "number",
+          "description": "Maximum possible exam points."
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Calculated score percentage (0 to 100)."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Whether percentage meets or exceeds passing threshold."
+        },
+        "hasTextQuestions": {
+          "type": "boolean",
+          "description": "True if the exam included written text questions."
+        },
+        "gradingStatus": {
+          "type": "string",
+          "description": "Terminal grading workflow state.",
+          "enum": ["pending_review", "finalized"]
+        },
+        "managerFeedback": {
+          "type": "string",
+          "description": "Optional clinical coaching notes from the Regional Manager.",
+          "minLength": 0,
+          "maxLength": 800
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Elapsed exam completion time in seconds."
+        },
+        "visibility": {
+          "type": "string",
+          "description": "Scope marker for authorized manager review queries.",
+          "enum": ["org"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "userRegion",
+        "userDesignation",
+        "productId",
+        "productName",
+        "productAuthorId",
+        "responses",
+        "awardedScore",
+        "maxScore",
+        "percentage",
+        "passed",
+        "hasTextQuestions",
+        "gradingStatus",
+        "managerFeedback",
+        "durationSeconds",
+        "visibility",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Non-PII colleague exam standing per product for the Novatek Academy leaderboard.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Colleague UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Colleague display name.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userRegion": {
+          "type": "string",
+          "description": "Colleague territory or region.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userDesignation": {
+          "type": "string",
+          "description": "Colleague role title.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userEmployeeId": {
+          "type": "string",
+          "description": "Colleague Employee ID.",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "userTerritory": {
+          "type": "string",
+          "description": "Colleague field territory.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "userArea": {
+          "type": "string",
+          "description": "Colleague sales area.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "productId": {
+          "type": "string",
+          "description": "Product module ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": {
+          "type": "string",
+          "description": "Product brand name.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "submissionId": {
+          "type": "string",
+          "description": "Linked exam submission document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "score": {
+          "type": "number",
+          "description": "Points scored."
+        },
+        "maxScore": {
+          "type": "number",
+          "description": "Maximum points available."
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Percentage score (0 to 100)."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Pass status."
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Time taken in seconds."
+        },
+        "gradingStatus": {
+          "type": "string",
+          "description": "Whether score is provisional pending text review or finalized.",
+          "enum": ["pending_review", "finalized"]
+        },
+        "visibility": {
+          "type": "string",
+          "description": "Organization visibility marker enforced by list queries.",
+          "enum": ["org"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "userName",
+        "userRegion",
+        "userDesignation",
+        "productId",
+        "productName",
+        "submissionId",
+        "score",
+        "maxScore",
+        "percentage",
+        "passed",
+        "durationSeconds",
+        "gradingStatus",
+        "visibility",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "AdminRecord",
+      "description": "Trusted RBAC collection storing Regional Manager administrator UIDs."
+    },
+    "/profiles/{userId}": {
+      "schema": "PublicProfile",
+      "description": "Organization-visible colleague profiles stripped of PII."
+    },
+    "/users_private/{userId}": {
+      "schema": "PrivateUserInfo",
+      "description": "Owner-and-admin isolated PII records containing email and employee code."
+    },
+    "/products/{productId}": {
+      "schema": "ProductModule",
+      "description": "Novatek pharmaceutical product training modules."
+    },
+    "/products/{productId}/resources/{resourceId}": {
+      "schema": "LearningResource",
+      "description": "Subcollection of text, video, and image learning resources per product."
+    },
+    "/products/{productId}/questions/{questionId}": {
+      "schema": "ExamQuestion",
+      "description": "Subcollection of MCQ and written text exam questions per product."
+    },
+    "/learning_progress/{progressId}": {
+      "schema": "LearningProgress",
+      "description": "Colleague learning resource completion records keyed as {userId}_{productId}."
+    },
+    "/exam_submissions/{submissionId}": {
+      "schema": "ExamSubmission",
+      "description": "Colleague exam submissions with MCQ and text responses."
+    },
+    "/leaderboard/{entryId}": {
+      "schema": "LeaderboardEntry",
+      "description": "Non-PII product certification leaderboard entries keyed as {userId}_{productId}."
+    }
+  }
+}
