@@ -72,25 +72,25 @@
         },
         "territory": {
           "type": "string",
-          "description": "Assigned pharmaceutical field territory.",
+          "description": "Assigned pharmaceutical field territory (optional for Area Manager and Regional Manager).",
           "minLength": 0,
           "maxLength": 80
         },
         "area": {
           "type": "string",
-          "description": "Assigned commercial sales area.",
+          "description": "Assigned commercial sales area (optional for Regional Manager).",
           "minLength": 0,
           "maxLength": 80
         },
         "region": {
           "type": "string",
-          "description": "Assigned sales region.",
+          "description": "Assigned Novatek sales region (24 official regions or custom region text).",
           "minLength": 2,
           "maxLength": 80
         },
         "isRegistrationComplete": {
           "type": "boolean",
-          "description": "True once Name, Employee ID, Territory, Area, Region, and Mobile No are verified."
+          "description": "True once Name, Employee ID, Region, Mobile No, and role-required Area/Territory are verified."
         },
         "visibility": {
           "type": "string",

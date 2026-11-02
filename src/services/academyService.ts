@@ -25,28 +25,31 @@ import {
   clampInt,
   clampOptionalString,
   clampString,
+  getLocationRequirementsForDesignation,
   getMissingRegistrationFields,
   isColleagueRegistrationComplete,
   isValidMobileNo,
+  normalizeDesignationLabel,
   sanitizeEmployeeId,
   sanitizeId,
   sanitizeMobileNo,
   scoreWrittenResponseByRubric,
 } from '../lib/validation';
-import type {
-  ColleagueRegistrationInput,
-  ExamQuestion,
-  ExamResponseItem,
-  ExamSubmission,
-  LearningProgress,
-  LearningResource,
-  PrivateUserInfo,
-  ProductModule,
-  PublicationStatus,
-  PublicProfile,
-  QuestionType,
-  ResourceType,
-  TherapeuticClass,
+import {
+  NOVATEK_REGIONS,
+  type ColleagueRegistrationInput,
+  type ExamQuestion,
+  type ExamResponseItem,
+  type ExamSubmission,
+  type LearningProgress,
+  type LearningResource,
+  type PrivateUserInfo,
+  type ProductModule,
+  type PublicationStatus,
+  type PublicProfile,
+  type QuestionType,
+  type ResourceType,
+  type TherapeuticClass,
 } from '../types/models';
 
 export async function checkUserIsAdmin(user: User): Promise<boolean> {
@@ -93,7 +96,7 @@ export async function ensureUserProfile(
 
   const defaultDesignation = isAdmin ? 'Regional Manager' : 'Medical Promotion Officer';
 
-  // If the colleague entered all 6 registration fields BEFORE clicking Google Sign-In, apply them immediately
+  // If the colleague entered registration fields BEFORE clicking Google Sign-In, apply them immediately
   if (pendingRegistration && isValidMobileNo(pendingRegistration.mobileNo)) {
     const safeName = clampString(
       pendingRegistration.displayName,
@@ -102,29 +105,37 @@ export async function ensureUserProfile(
       user.displayName || 'Novatek Colleague'
     );
     const safeEmpId = sanitizeEmployeeId(pendingRegistration.employeeId);
-    const safeTerritory = clampString(
-      pendingRegistration.territory,
-      BLUEPRINT_LIMITS.TERRITORY_MIN,
-      BLUEPRINT_LIMITS.TERRITORY_MAX,
-      'Central Territory'
+    const safeDesignation = clampString(
+      normalizeDesignationLabel(pendingRegistration.designation) || defaultDesignation,
+      BLUEPRINT_LIMITS.DESIGNATION_MIN,
+      BLUEPRINT_LIMITS.DESIGNATION_MAX,
+      defaultDesignation
     );
-    const safeArea = clampString(
-      pendingRegistration.area,
-      BLUEPRINT_LIMITS.AREA_MIN,
-      BLUEPRINT_LIMITS.AREA_MAX,
-      'Metro Area'
-    );
+    const { territoryRequired, areaRequired } =
+      getLocationRequirementsForDesignation(safeDesignation);
+
+    const trimmedTerritory = pendingRegistration.territory.trim();
+    const trimmedArea = pendingRegistration.area.trim();
+    const locationValid =
+      (!territoryRequired || trimmedTerritory.length >= BLUEPRINT_LIMITS.TERRITORY_MIN) &&
+      (!areaRequired || trimmedArea.length >= BLUEPRINT_LIMITS.AREA_MIN) &&
+      pendingRegistration.region.trim().length >= BLUEPRINT_LIMITS.REGION_MIN;
+
+    const safeTerritory = territoryRequired
+      ? clampString(
+          trimmedTerritory,
+          BLUEPRINT_LIMITS.TERRITORY_MIN,
+          BLUEPRINT_LIMITS.TERRITORY_MAX
+        )
+      : clampOptionalString(trimmedTerritory, BLUEPRINT_LIMITS.TERRITORY_MAX);
+    const safeArea = areaRequired
+      ? clampString(trimmedArea, BLUEPRINT_LIMITS.AREA_MIN, BLUEPRINT_LIMITS.AREA_MAX)
+      : clampOptionalString(trimmedArea, BLUEPRINT_LIMITS.AREA_MAX);
     const safeRegion = clampString(
       pendingRegistration.region,
       BLUEPRINT_LIMITS.REGION_MIN,
       BLUEPRINT_LIMITS.REGION_MAX,
-      'Dhaka North'
-    );
-    const safeDesignation = clampString(
-      pendingRegistration.designation || defaultDesignation,
-      BLUEPRINT_LIMITS.DESIGNATION_MIN,
-      BLUEPRINT_LIMITS.DESIGNATION_MAX,
-      defaultDesignation
+      NOVATEK_REGIONS[0]
     );
     const safeMobile = sanitizeMobileNo(pendingRegistration.mobileNo);
     const safeEmail = clampString(
@@ -134,7 +145,7 @@ export async function ensureUserProfile(
       'colleague@novatek.com'
     );
 
-    if (safeEmpId.length >= BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN) {
+    if (safeEmpId.length >= BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN && locationValid) {
       if (!publicProfile) {
         const createdPub: Omit<PublicProfile, 'createdAt' | 'updatedAt'> = {
           uid: user.uid,
@@ -238,7 +249,7 @@ export async function ensureUserProfile(
       employeeId: '',
       territory: '',
       area: '',
-      region: 'Dhaka North',
+      region: NOVATEK_REGIONS[0],
       isRegistrationComplete: false,
       visibility: 'org',
     };
@@ -312,26 +323,45 @@ export async function updateColleagueProfile(
     'Novatek Colleague'
   );
   const safeDesignation = clampString(
-    input.designation,
+    normalizeDesignationLabel(input.designation),
     BLUEPRINT_LIMITS.DESIGNATION_MIN,
     BLUEPRINT_LIMITS.DESIGNATION_MAX,
     'Medical Promotion Officer'
   );
-  const safeTerritory = clampString(
-    input.territory,
-    BLUEPRINT_LIMITS.TERRITORY_MIN,
-    BLUEPRINT_LIMITS.TERRITORY_MAX
-  );
-  const safeArea = clampString(
-    input.area,
-    BLUEPRINT_LIMITS.AREA_MIN,
-    BLUEPRINT_LIMITS.AREA_MAX
-  );
+  const { territoryRequired, areaRequired } =
+    getLocationRequirementsForDesignation(safeDesignation);
+
+  const trimmedTerritory = input.territory.trim();
+  const trimmedArea = input.area.trim();
+  const trimmedRegion = input.region.trim();
+
+  if (territoryRequired && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
+    throw new Error('Please enter your assigned Territory (at least 2 characters).');
+  }
+  if (!territoryRequired && trimmedTerritory.length > 0 && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
+    throw new Error('Territory is optional for your designation—leave it blank or enter at least 2 characters.');
+  }
+  if (areaRequired && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
+    throw new Error('Please enter your assigned Area (at least 2 characters).');
+  }
+  if (!areaRequired && trimmedArea.length > 0 && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
+    throw new Error('Area is optional for Regional Managers—leave it blank or enter at least 2 characters.');
+  }
+  if (trimmedRegion.length < BLUEPRINT_LIMITS.REGION_MIN) {
+    throw new Error('Please enter or select your assigned Region (at least 2 characters).');
+  }
+
+  const safeTerritory = territoryRequired
+    ? clampString(trimmedTerritory, BLUEPRINT_LIMITS.TERRITORY_MIN, BLUEPRINT_LIMITS.TERRITORY_MAX)
+    : clampOptionalString(trimmedTerritory, BLUEPRINT_LIMITS.TERRITORY_MAX);
+  const safeArea = areaRequired
+    ? clampString(trimmedArea, BLUEPRINT_LIMITS.AREA_MIN, BLUEPRINT_LIMITS.AREA_MAX)
+    : clampOptionalString(trimmedArea, BLUEPRINT_LIMITS.AREA_MAX);
   const safeRegion = clampString(
-    input.region,
+    trimmedRegion,
     BLUEPRINT_LIMITS.REGION_MIN,
     BLUEPRINT_LIMITS.REGION_MAX,
-    'Dhaka North'
+    NOVATEK_REGIONS[0]
   );
 
   const pubRef = doc(db, 'profiles', uid);

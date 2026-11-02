@@ -39,6 +39,15 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const [regionFilter, setRegionFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const regionFilterOptions = useMemo(() => {
+    const seen = new Set<string>(NOVATEK_REGIONS);
+    for (const e of entries) {
+      const reg = (e.userRegion || '').trim();
+      if (reg) seen.add(reg);
+    }
+    return Array.from(seen);
+  }, [entries]);
+
   const formatDuration = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -203,7 +212,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-teal-700 cursor-pointer"
           >
             <option value="ALL">All Sales Regions</option>
-            {NOVATEK_REGIONS.map((reg) => (
+            {regionFilterOptions.map((reg) => (
               <option key={reg} value={reg}>
                 {reg}
               </option>

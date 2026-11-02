@@ -52,6 +52,7 @@ import {
 } from './lib/firebase';
 import {
   BLUEPRINT_LIMITS,
+  getLocationRequirementsForDesignation,
   getMissingRegistrationFields,
   isColleagueRegistrationComplete,
   isValidMobileNo,
@@ -155,10 +156,16 @@ function NovatekAcademyPortal() {
   const [preDesignation, setPreDesignation] = useState<string>(NOVATEK_DESIGNATIONS[0]);
   const [preTerritory, setPreTerritory] = useState('');
   const [preArea, setPreArea] = useState('');
-  const [preRegion, setPreRegion] = useState<string>(NOVATEK_REGIONS[0]);
+  const [preRegionChoice, setPreRegionChoice] = useState<string>(NOVATEK_REGIONS[0]);
+  const [preCustomRegion, setPreCustomRegion] = useState<string>('');
   const [preMobileNo, setPreMobileNo] = useState('');
   const pendingRegRef = useRef<ColleagueRegistrationInput | null>(null);
   const explicitSignInTriggeredRef = useRef(false);
+
+  const preLocationReqs = useMemo(
+    () => getLocationRequirementsForDesignation(preDesignation),
+    [preDesignation]
+  );
 
   // Navigation & Modal State
   const [route, setRoute] = useState<ActiveRoute>('catalog');
@@ -628,16 +635,42 @@ function NovatekAcademyPortal() {
       setAuthError('Please enter your official Novatek Employee ID.');
       return;
     }
-    if (preTerritory.trim().length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
+
+    const { territoryRequired, areaRequired } =
+      getLocationRequirementsForDesignation(preDesignation);
+    const trimmedTerritory = preTerritory.trim();
+    const trimmedArea = preArea.trim();
+    const resolvedRegion =
+      preRegionChoice === '__custom__' ? preCustomRegion.trim() : preRegionChoice.trim();
+
+    if (territoryRequired && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
       setAuthError('Please enter your assigned Territory.');
       return;
     }
-    if (preArea.trim().length < BLUEPRINT_LIMITS.AREA_MIN) {
+    if (
+      !territoryRequired &&
+      trimmedTerritory.length > 0 &&
+      trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN
+    ) {
+      setAuthError(
+        'Territory is optional for your designation—leave it blank or enter at least 2 characters.'
+      );
+      return;
+    }
+
+    if (areaRequired && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
       setAuthError('Please enter your assigned Area.');
       return;
     }
-    if (preRegion.trim().length < BLUEPRINT_LIMITS.REGION_MIN) {
-      setAuthError('Please select your assigned Region.');
+    if (!areaRequired && trimmedArea.length > 0 && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
+      setAuthError(
+        'Area is optional for Regional Managers—leave it blank or enter at least 2 characters.'
+      );
+      return;
+    }
+
+    if (resolvedRegion.length < BLUEPRINT_LIMITS.REGION_MIN) {
+      setAuthError('Please select or enter your assigned Region.');
       return;
     }
     if (!isValidMobileNo(preMobileNo)) {
@@ -649,9 +682,9 @@ function NovatekAcademyPortal() {
       displayName: preName.trim(),
       employeeId: cleanEmpId,
       designation: preDesignation,
-      territory: preTerritory.trim(),
-      area: preArea.trim(),
-      region: preRegion.trim(),
+      territory: trimmedTerritory,
+      area: trimmedArea,
+      region: resolvedRegion,
       mobileNo: preMobileNo.trim(),
     };
 
@@ -1092,8 +1125,8 @@ function NovatekAcademyPortal() {
                         Colleague Registration &amp; Portal Entry
                       </h2>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Name, Employee ID, Territory, Area, Region, and Mobile No are mandatory
-                        before taking any exam.
+                        Complete colleague details before taking any exam (Territory optional for
+                        Area Manager; Territory &amp; Area optional for Regional Manager).
                       </p>
                     </div>
 
@@ -1238,50 +1271,16 @@ function NovatekAcademyPortal() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         <div className="space-y-1">
                           <label className="block text-xs font-medium text-slate-700">
-                            Territory <span className="text-red-600">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            minLength={BLUEPRINT_LIMITS.TERRITORY_MIN}
-                            maxLength={BLUEPRINT_LIMITS.TERRITORY_MAX}
-                            value={preTerritory}
-                            onChange={(e) => setPreTerritory(e.target.value)}
-                            placeholder="e.g. Uttara Sector 7"
-                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium text-slate-700">
-                            Area <span className="text-red-600">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            minLength={BLUEPRINT_LIMITS.AREA_MIN}
-                            maxLength={BLUEPRINT_LIMITS.AREA_MAX}
-                            value={preArea}
-                            onChange={(e) => setPreArea(e.target.value)}
-                            placeholder="e.g. Uttara West Area"
-                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                        <div className="space-y-1">
-                          <label className="block text-xs font-medium text-slate-700">
-                            Region <span className="text-red-600">*</span>
+                            Designation <span className="text-red-600">*</span>
                           </label>
                           <select
-                            value={preRegion}
-                            onChange={(e) => setPreRegion(e.target.value)}
+                            value={preDesignation}
+                            onChange={(e) => setPreDesignation(e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
                           >
-                            {NOVATEK_REGIONS.map((r) => (
-                              <option key={r} value={r}>
-                                {r}
+                            {NOVATEK_DESIGNATIONS.map((d) => (
+                              <option key={d} value={d}>
+                                {d}
                               </option>
                             ))}
                           </select>
@@ -1289,36 +1288,105 @@ function NovatekAcademyPortal() {
 
                         <div className="space-y-1">
                           <label className="block text-xs font-medium text-slate-700">
-                            Mobile No <span className="text-red-600">*</span>
+                            Region <span className="text-red-600">*</span>
+                          </label>
+                          <select
+                            value={preRegionChoice}
+                            onChange={(e) => setPreRegionChoice(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
+                          >
+                            {NOVATEK_REGIONS.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                            <option value="__custom__">Other (Enter Region Text)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {preRegionChoice === '__custom__' && (
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-slate-700">
+                            Enter Region Name <span className="text-red-600">*</span>
                           </label>
                           <input
-                            type="tel"
+                            type="text"
                             required
-                            minLength={BLUEPRINT_LIMITS.MOBILE_NO_MIN}
-                            maxLength={BLUEPRINT_LIMITS.MOBILE_NO_MAX}
-                            value={preMobileNo}
-                            onChange={(e) => setPreMobileNo(e.target.value)}
-                            placeholder="e.g. 01711-223344"
-                            className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+                            minLength={BLUEPRINT_LIMITS.REGION_MIN}
+                            maxLength={BLUEPRINT_LIMITS.REGION_MAX}
+                            value={preCustomRegion}
+                            onChange={(e) => setPreCustomRegion(e.target.value)}
+                            placeholder="Type your assigned Region name..."
+                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+                          />
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-slate-700">
+                            Territory{' '}
+                            {preLocationReqs.territoryRequired ? (
+                              <span className="text-red-600">*</span>
+                            ) : (
+                              <span className="text-slate-400 font-normal">(Optional)</span>
+                            )}
+                          </label>
+                          <input
+                            type="text"
+                            required={preLocationReqs.territoryRequired}
+                            maxLength={BLUEPRINT_LIMITS.TERRITORY_MAX}
+                            value={preTerritory}
+                            onChange={(e) => setPreTerritory(e.target.value)}
+                            placeholder={
+                              preLocationReqs.territoryRequired
+                                ? 'e.g. Uttara Sector 7'
+                                : `Optional for ${preDesignation}`
+                            }
+                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-slate-700">
+                            Area{' '}
+                            {preLocationReqs.areaRequired ? (
+                              <span className="text-red-600">*</span>
+                            ) : (
+                              <span className="text-slate-400 font-normal">(Optional)</span>
+                            )}
+                          </label>
+                          <input
+                            type="text"
+                            required={preLocationReqs.areaRequired}
+                            maxLength={BLUEPRINT_LIMITS.AREA_MAX}
+                            value={preArea}
+                            onChange={(e) => setPreArea(e.target.value)}
+                            placeholder={
+                              preLocationReqs.areaRequired
+                                ? 'e.g. Uttara West Area'
+                                : 'Optional for Regional Manager'
+                            }
+                            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
                           />
                         </div>
                       </div>
 
                       <div className="space-y-1">
                         <label className="block text-xs font-medium text-slate-700">
-                          Designation
+                          Mobile No <span className="text-red-600">*</span>
                         </label>
-                        <select
-                          value={preDesignation}
-                          onChange={(e) => setPreDesignation(e.target.value)}
-                          className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
-                        >
-                          {NOVATEK_DESIGNATIONS.map((d) => (
-                            <option key={d} value={d}>
-                              {d}
-                            </option>
-                          ))}
-                        </select>
+                        <input
+                          type="tel"
+                          required
+                          minLength={BLUEPRINT_LIMITS.MOBILE_NO_MIN}
+                          maxLength={BLUEPRINT_LIMITS.MOBILE_NO_MAX}
+                          value={preMobileNo}
+                          onChange={(e) => setPreMobileNo(e.target.value)}
+                          placeholder="e.g. 01711-223344"
+                          className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+                        />
                       </div>
 
                       <button
@@ -1341,9 +1409,8 @@ function NovatekAcademyPortal() {
                     <div className="space-y-5 py-3">
                       <p className="text-sm text-slate-600 leading-relaxed">
                         Already registered with Novatek Academy? Sign in with your Google account.
-                        If any required field (Name, Employee ID, Territory, Area, Region, or Mobile
-                        No) is still missing on your profile, you will be prompted to complete it
-                        after sign-in before taking an exam.
+                        If any required registration detail is still missing for your designation,
+                        you will be prompted to complete it after sign-in before taking an exam.
                       </p>
 
                       <button
@@ -1380,8 +1447,8 @@ function NovatekAcademyPortal() {
                     Verified Colleague MCQ &amp; Written Exams
                   </h2>
                   <p className="text-sm text-slate-600 leading-relaxed">
-                    Verified colleagues with complete territory, area, region, employee ID, and
-                    mobile details take timed certification exams controlled by Administrators.
+                    Verified colleagues with complete role-based field registration details take
+                    timed certification exams controlled by Administrators.
                   </p>
                 </div>
                 <div id="leaderboard-info" className="space-y-2">
@@ -1390,8 +1457,8 @@ function NovatekAcademyPortal() {
                     Transparent Regional Leaderboard
                   </h2>
                   <p className="text-sm text-slate-600 leading-relaxed">
-                    Celebrate top-performing colleagues across Dhaka, Chattogram, Sylhet, Rajshahi,
-                    and Khulna territories immediately upon exam completion.
+                    Celebrate top-performing colleagues across all 24 Novatek regions—including
+                    Dhaka, CTG, Jashore, Khulna, Rajshahi, Bogura, Sylhet, Cumilla, and Barishal.
                   </p>
                 </div>
               </div>

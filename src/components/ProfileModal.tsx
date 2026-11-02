@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AlertCircle, Check, Copy, LogOut, X } from 'lucide-react';
 import {
   BLUEPRINT_LIMITS,
+  getLocationRequirementsForDesignation,
   isColleagueRegistrationComplete,
   isValidMobileNo,
+  normalizeDesignationLabel,
   sanitizeEmployeeId,
 } from '../lib/validation';
 import {
@@ -35,20 +37,44 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   const alreadyComplete = isColleagueRegistrationComplete(profile, privateInfo);
 
+  const initialRegion = (profile.region || '').trim();
+  const isInitialRegionOfficial = NOVATEK_REGIONS.includes(initialRegion);
+  const useInitialCustomRegion = Boolean(alreadyComplete && initialRegion && !isInitialRegionOfficial);
+
   const [displayName, setDisplayName] = useState(profile.displayName || '');
   const [employeeId, setEmployeeId] = useState(
     profile.employeeId || (alreadyComplete ? privateInfo.employeeCode : '')
   );
   const [designation, setDesignation] = useState(
-    profile.designation || (isAdmin ? 'Regional Manager' : 'Medical Promotion Officer')
+    normalizeDesignationLabel(profile.designation) ||
+      (isAdmin ? 'Regional Manager' : 'Medical Promotion Officer')
   );
   const [territory, setTerritory] = useState(profile.territory || '');
   const [area, setArea] = useState(profile.area || '');
-  const [region, setRegion] = useState(profile.region || NOVATEK_REGIONS[0]);
+  const [regionChoice, setRegionChoice] = useState(
+    useInitialCustomRegion
+      ? '__custom__'
+      : isInitialRegionOfficial
+      ? initialRegion
+      : NOVATEK_REGIONS[0]
+  );
+  const [customRegion, setCustomRegion] = useState(useInitialCustomRegion ? initialRegion : '');
   const [mobileNo, setMobileNo] = useState(privateInfo.mobileNo || '');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [copiedUid, setCopiedUid] = useState(false);
+
+  const locationReqs = useMemo(
+    () => getLocationRequirementsForDesignation(designation),
+    [designation]
+  );
+
+  const designationOptions = useMemo(() => {
+    if (designation && !NOVATEK_DESIGNATIONS.includes(designation)) {
+      return [designation, ...NOVATEK_DESIGNATIONS];
+    }
+    return NOVATEK_DESIGNATIONS;
+  }, [designation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,16 +88,44 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setFormError('Please enter your official Novatek Employee ID.');
       return;
     }
-    if (territory.trim().length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
+
+    const trimmedTerritory = territory.trim();
+    const trimmedArea = area.trim();
+    const resolvedRegion =
+      regionChoice === '__custom__' ? customRegion.trim() : regionChoice.trim();
+
+    if (locationReqs.territoryRequired && trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
       setFormError('Please enter your assigned Territory.');
       return;
     }
-    if (area.trim().length < BLUEPRINT_LIMITS.AREA_MIN) {
+    if (
+      !locationReqs.territoryRequired &&
+      trimmedTerritory.length > 0 &&
+      trimmedTerritory.length < BLUEPRINT_LIMITS.TERRITORY_MIN
+    ) {
+      setFormError(
+        'Territory is optional for your designation—leave it blank or enter at least 2 characters.'
+      );
+      return;
+    }
+
+    if (locationReqs.areaRequired && trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN) {
       setFormError('Please enter your assigned Area.');
       return;
     }
-    if (region.trim().length < BLUEPRINT_LIMITS.REGION_MIN) {
-      setFormError('Please select your assigned Sales Region.');
+    if (
+      !locationReqs.areaRequired &&
+      trimmedArea.length > 0 &&
+      trimmedArea.length < BLUEPRINT_LIMITS.AREA_MIN
+    ) {
+      setFormError(
+        'Area is optional for Regional Managers—leave it blank or enter at least 2 characters.'
+      );
+      return;
+    }
+
+    if (resolvedRegion.length < BLUEPRINT_LIMITS.REGION_MIN) {
+      setFormError('Please select or enter your assigned Sales Region.');
       return;
     }
     if (!isValidMobileNo(mobileNo)) {
@@ -85,9 +139,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         displayName: displayName.trim(),
         employeeId: sanitizeEmployeeId(employeeId),
         designation,
-        territory: territory.trim(),
-        area: area.trim(),
-        region: region.trim(),
+        territory: trimmedTerritory,
+        area: trimmedArea,
+        region: resolvedRegion,
         mobileNo: mobileNo.trim(),
       });
       onClose();
@@ -141,10 +195,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         <form onSubmit={(e) => void handleSubmit(e)} className="p-6 space-y-4">
           {!alreadyComplete && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5 text-xs text-amber-900 leading-relaxed">
-              Please provide your <strong>Name</strong>, <strong>Employee ID</strong>,{' '}
-              <strong>Territory</strong>, <strong>Area</strong>, <strong>Region</strong>, and{' '}
-              <strong>Mobile No</strong>. Colleagues cannot start or submit certification exams
-              without completing these details.
+              Please complete your mandatory colleague details (<strong>Name</strong>,{' '}
+              <strong>Employee ID</strong>, <strong>Region</strong>, <strong>Mobile No</strong>
+              {locationReqs.areaRequired ? (
+                <>
+                  , <strong>Area</strong>
+                </>
+              ) : null}
+              {locationReqs.territoryRequired ? (
+                <>
+                  , and <strong>Territory</strong>
+                </>
+              ) : null}
+              ) to unlock certification exams.
             </div>
           )}
 
@@ -187,38 +250,25 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">Territory *</label>
-              <input
-                required
-                minLength={2}
-                maxLength={80}
-                value={territory}
-                onChange={(e) => setTerritory(e.target.value)}
-                placeholder="e.g. Dhanmondi-2"
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
-              />
+              <label className="block text-xs font-medium text-slate-700 mb-1">Designation *</label>
+              <select
+                value={designation}
+                onChange={(e) => setDesignation(e.target.value)}
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
+              >
+                {designationOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">Area *</label>
-              <input
-                required
-                minLength={2}
-                maxLength={80}
-                value={area}
-                onChange={(e) => setArea(e.target.value)}
-                placeholder="e.g. Dhaka Metro South"
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">Region *</label>
               <select
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
+                value={regionChoice}
+                onChange={(e) => setRegionChoice(e.target.value)}
                 className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
               >
                 {NOVATEK_REGIONS.map((r) => (
@@ -226,37 +276,88 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     {r}
                   </option>
                 ))}
+                <option value="__custom__">Other (Enter Region Text)</option>
               </select>
+            </div>
+          </div>
+
+          {regionChoice === '__custom__' && (
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Enter Region Name *
+              </label>
+              <input
+                required
+                minLength={2}
+                maxLength={80}
+                value={customRegion}
+                onChange={(e) => setCustomRegion(e.target.value)}
+                placeholder="Type your assigned Region name..."
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Territory{' '}
+                {locationReqs.territoryRequired ? (
+                  '*'
+                ) : (
+                  <span className="text-slate-400 font-normal">(Optional)</span>
+                )}
+              </label>
+              <input
+                required={locationReqs.territoryRequired}
+                maxLength={80}
+                value={territory}
+                onChange={(e) => setTerritory(e.target.value)}
+                placeholder={
+                  locationReqs.territoryRequired
+                    ? 'e.g. Dhanmondi-2'
+                    : `Optional for ${designation}`
+                }
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+              />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">Mobile No *</label>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Area{' '}
+                {locationReqs.areaRequired ? (
+                  '*'
+                ) : (
+                  <span className="text-slate-400 font-normal">(Optional)</span>
+                )}
+              </label>
               <input
-                required
-                type="tel"
-                minLength={7}
-                maxLength={20}
-                value={mobileNo}
-                onChange={(e) => setMobileNo(e.target.value)}
-                placeholder="e.g. +880 1711-223344"
-                className="w-full px-3.5 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+                required={locationReqs.areaRequired}
+                maxLength={80}
+                value={area}
+                onChange={(e) => setArea(e.target.value)}
+                placeholder={
+                  locationReqs.areaRequired
+                    ? 'e.g. Dhaka Metro South'
+                    : 'Optional for Regional Manager'
+                }
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Designation</label>
-            <select
-              value={designation}
-              onChange={(e) => setDesignation(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-teal-700"
-            >
-              {NOVATEK_DESIGNATIONS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Mobile No *</label>
+            <input
+              required
+              type="tel"
+              minLength={7}
+              maxLength={20}
+              value={mobileNo}
+              onChange={(e) => setMobileNo(e.target.value)}
+              placeholder="e.g. +880 1711-223344"
+              className="w-full px-3.5 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-teal-700"
+            />
             <p className="text-[11px] text-slate-500 mt-1">
               Mobile No and verified email ({privateInfo.email || 'Google Account'}) are stored in a
               private record hidden from public colleague views.

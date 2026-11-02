@@ -94,11 +94,53 @@ export function isValidMobileNo(raw: string): boolean {
   );
 }
 
+export interface DesignationLocationRequirements {
+  territoryRequired: boolean;
+  areaRequired: boolean;
+  regionRequired: true;
+}
+
+export function normalizeDesignationLabel(designation: string | null | undefined): string {
+  const trimmed = (designation || '').trim();
+  if (trimmed === 'Area Sales Manager') {
+    return 'Area Manager';
+  }
+  return trimmed;
+}
+
+export function getLocationRequirementsForDesignation(
+  designation: string | null | undefined
+): DesignationLocationRequirements {
+  const normalized = normalizeDesignationLabel(designation);
+  if (normalized === 'Regional Manager') {
+    return {
+      territoryRequired: false,
+      areaRequired: false,
+      regionRequired: true,
+    };
+  }
+  if (normalized === 'Area Manager') {
+    return {
+      territoryRequired: false,
+      areaRequired: true,
+      regionRequired: true,
+    };
+  }
+  return {
+    territoryRequired: true,
+    areaRequired: true,
+    regionRequired: true,
+  };
+}
+
 export function getMissingRegistrationFields(
   profile: PublicProfile | null | undefined,
   privateInfo: PrivateUserInfo | null | undefined
 ): string[] {
   const missing: string[] = [];
+  const { territoryRequired, areaRequired } = getLocationRequirementsForDesignation(
+    profile?.designation
+  );
 
   if (!profile || (profile.displayName || '').trim().length < BLUEPRINT_LIMITS.DISPLAY_NAME_MIN) {
     missing.push('Name');
@@ -106,22 +148,31 @@ export function getMissingRegistrationFields(
 
   const empId = (profile?.employeeId || '').trim();
   const privEmp = (privateInfo?.employeeCode || '').trim();
-  // Require explicit Employee ID on completed profile
+  // Require explicit Employee ID on both public and private records
   if (
     !profile?.isRegistrationComplete ||
     empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN ||
     privEmp.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN
   ) {
-    if (empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN) {
+    if (
+      empId.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN ||
+      privEmp.length < BLUEPRINT_LIMITS.EMPLOYEE_CODE_MIN
+    ) {
       missing.push('Employee ID');
     }
   }
 
-  if (!profile || (profile.territory || '').trim().length < BLUEPRINT_LIMITS.TERRITORY_MIN) {
+  if (
+    territoryRequired &&
+    (!profile || (profile.territory || '').trim().length < BLUEPRINT_LIMITS.TERRITORY_MIN)
+  ) {
     missing.push('Territory');
   }
 
-  if (!profile || (profile.area || '').trim().length < BLUEPRINT_LIMITS.AREA_MIN) {
+  if (
+    areaRequired &&
+    (!profile || (profile.area || '').trim().length < BLUEPRINT_LIMITS.AREA_MIN)
+  ) {
     missing.push('Area');
   }
 

@@ -11,7 +11,7 @@
 7. **Atomic Submission-Leaderboard Write**: Creating `/exam_submissions/{submissionId}` requires `existsAfter(/databases/$(database)/documents/leaderboard/$(request.auth.uid + '_' + incoming().productId))`, and creating `/leaderboard/{entryId}` requires `existsAfter(/databases/$(database)/documents/exam_submissions/$(incoming().submissionId))`.
 8. **Terminal State Locking**: Once an `ExamSubmission` reaches `gradingStatus == 'finalized'`, no non-admin updates are permitted. Once `LearningProgress.isModuleCompleted == true`, it cannot be reverted to `false` by a non-admin.
 9. **Cost-Safe Query Enforcer**: Every `allow list` block evaluates `resource.data` directly without `get()` or `exists()` calls.
-10. **Mandatory Colleague Registration Gate**: An `/exam_submissions/{submissionId}` document cannot be created unless `/profiles/{request.auth.uid}` satisfies `isCompleteColleagueProfile` (`displayName`, `employeeId`, `territory`, `area`, `region`, `isRegistrationComplete == true`) AND `/users_private/{request.auth.uid}` satisfies `isCompletePrivateUserInfo` (`employeeCode` and `mobileNo`).
+10. **Mandatory Role-Aware Colleague Registration Gate**: An `/exam_submissions/{submissionId}` document cannot be created unless `/profiles/{request.auth.uid}` satisfies `isCompleteColleagueProfile` (`displayName`, `employeeId`, `region`, `isRegistrationComplete == true`, plus `hasRequiredLocationForDesignation`: `territory` and `area` required by default, `territory` optional for `Area Manager` / `Area Sales Manager`, and both `territory` and `area` optional for `Regional Manager`) AND `/users_private/{request.auth.uid}` satisfies `isCompletePrivateUserInfo` (`employeeCode` and `mobileNo`).
 
 ---
 

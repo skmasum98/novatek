@@ -179,9 +179,85 @@ test('QAP Guard: /admins list rule enforces explicit equality predicates without
   assert.doesNotMatch(rulesSource, /allow list:\s*if[^\n;]*is string/);
 });
 
-test('Registration Gate: Exam submission without Name, Employee ID, Territory, Area, Region, and Mobile No is DENIED', () => {
+function hasRequiredLocationForDesignation(data: {
+  designation: string;
+  territory?: string;
+  area?: string;
+}): boolean {
+  if (data.designation === 'Regional Manager') {
+    return true;
+  }
+  if (data.designation === 'Area Manager' || data.designation === 'Area Sales Manager') {
+    return typeof data.area === 'string' && data.area.length >= 2 && data.area.length <= 80;
+  }
+  return (
+    typeof data.territory === 'string' &&
+    data.territory.length >= 2 &&
+    data.territory.length <= 80 &&
+    typeof data.area === 'string' &&
+    data.area.length >= 2 &&
+    data.area.length <= 80
+  );
+}
+
+test('Registration Gate: Role-aware Territory & Area rules (MPO vs Area Manager vs Regional Manager)', () => {
+  assert.match(rulesSource, /function hasRequiredLocationForDesignation\(data\)/);
   assert.match(rulesSource, /isCompleteColleagueProfile\(get\(\/databases\/\$\(database\)\/documents\/profiles\/\$\(request\.auth\.uid\)\)\.data\)/);
   assert.match(rulesSource, /isCompletePrivateUserInfo\(get\(\/databases\/\$\(database\)\/documents\/users_private\/\$\(request\.auth\.uid\)\)\.data\)/);
+
+  // MPO missing territory or area -> DENIED
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Medical Promotion Officer',
+      territory: '',
+      area: 'Jashore Central',
+    }),
+    false
+  );
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Medical Promotion Officer',
+      territory: 'Jashore Sadar',
+      area: '',
+    }),
+    false
+  );
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Medical Promotion Officer',
+      territory: 'Jashore Sadar',
+      area: 'Jashore Central',
+    }),
+    true
+  );
+
+  // Area Manager: territory optional, area mandatory
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Area Manager',
+      territory: '',
+      area: 'Khulna Metro',
+    }),
+    true
+  );
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Area Manager',
+      territory: '',
+      area: '',
+    }),
+    false
+  );
+
+  // Regional Manager: both territory and area optional
+  assert.equal(
+    hasRequiredLocationForDesignation({
+      designation: 'Regional Manager',
+      territory: '',
+      area: '',
+    }),
+    true
+  );
 });
 
 test('Direct Exam Policy: Verified registered colleagues can submit exams directly without prior learning_progress', () => {

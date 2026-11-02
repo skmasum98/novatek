@@ -64,6 +64,18 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function hasRequiredLocationForDesignation(data) {
+      return (
+        data.designation == 'Regional Manager'
+      ) || (
+        (data.designation == 'Area Manager' || data.designation == 'Area Sales Manager') &&
+        'area' in data && data.area is string && data.area.size() >= 2 && data.area.size() <= 80
+      ) || (
+        'territory' in data && data.territory is string && data.territory.size() >= 2 && data.territory.size() <= 80 &&
+        'area' in data && data.area is string && data.area.size() >= 2 && data.area.size() <= 80
+      );
+    }
+
     function isValidPublicProfile(data) {
       return data.keys().hasAll(['uid', 'displayName', 'designation', 'region', 'visibility', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly([
@@ -85,8 +97,7 @@ service cloud.firestore {
         (!('isRegistrationComplete' in data) || data.isRegistrationComplete is bool) &&
         (!('isRegistrationComplete' in data) || data.isRegistrationComplete == false || (
           'employeeId' in data && data.employeeId.size() >= 2 &&
-          'territory' in data && data.territory.size() >= 2 &&
-          'area' in data && data.area.size() >= 2
+          hasRequiredLocationForDesignation(data)
         )) &&
         data.visibility is string && data.visibility.size() == 3 && data.visibility == 'org' &&
         data.createdAt is timestamp &&
@@ -110,17 +121,17 @@ service cloud.firestore {
     }
 
     function isCompleteColleagueProfile(prof) {
-      return prof.displayName is string && prof.displayName.size() >= 2 &&
-        'employeeId' in prof && prof.employeeId is string && prof.employeeId.size() >= 2 &&
-        'territory' in prof && prof.territory is string && prof.territory.size() >= 2 &&
-        'area' in prof && prof.area is string && prof.area.size() >= 2 &&
-        prof.region is string && prof.region.size() >= 2 &&
+      return prof.displayName is string && prof.displayName.size() >= 2 && prof.displayName.size() <= 80 &&
+        prof.designation is string && prof.designation.size() >= 2 && prof.designation.size() <= 80 &&
+        'employeeId' in prof && prof.employeeId is string && prof.employeeId.size() >= 2 && prof.employeeId.size() <= 40 &&
+        hasRequiredLocationForDesignation(prof) &&
+        prof.region is string && prof.region.size() >= 2 && prof.region.size() <= 80 &&
         'isRegistrationComplete' in prof && prof.isRegistrationComplete == true;
     }
 
     function isCompletePrivateUserInfo(priv) {
-      return priv.employeeCode is string && priv.employeeCode.size() >= 2 &&
-        'mobileNo' in priv && priv.mobileNo is string && priv.mobileNo.size() >= 7;
+      return priv.employeeCode is string && priv.employeeCode.size() >= 2 && priv.employeeCode.size() <= 40 &&
+        'mobileNo' in priv && priv.mobileNo is string && priv.mobileNo.size() >= 7 && priv.mobileNo.size() <= 20;
     }
 
     function isValidTherapeuticClass(val) {
